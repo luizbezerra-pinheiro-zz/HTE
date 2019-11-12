@@ -10,4 +10,6 @@ Crash - https://crash3.lshtm.ac.uk
 
 Coursera - https://www.coursera.org/learn/crash-course-in-causality
 
-MatchIt Package Reference - https://imai.fas.harvard.edu/research/files/matchit.pdf
+MatchIt:
+  Package Reference - https://imai.fas.harvard.edu/research/files/matchit.pdf
+  Matching Method - https://en.wikipedia.org/wiki/Matching_(statistics)
