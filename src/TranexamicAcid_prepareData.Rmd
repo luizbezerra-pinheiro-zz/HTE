@@ -496,6 +496,6 @@ data_indTBI <- data_indAll %>%
 
 # Save the data
 ```{r save_data_for_ate}
-# write.csv(data_indAll, file="~/Documents/TraumaMatrix/CausalInference/AcideTranexamique/Data/data_preprocessed_all_individuals.csv")
-# write.csv(data_indTBI, file="~/Documents/TraumaMatrix/CausalInference/AcideTranexamique/Data/data_preprocessed_tbi_individuals.csv")
+write.csv(data_indAll, file="~/Documents/Polytechnique/MAP573-Data_Analysis_and_Unsupervised_Learning/Project/HTE/data/data_preprocessed_all_individuals.csv")
+write.csv(data_indTBI, file="~/Documents/Polytechnique/MAP573-Data_Analysis_and_Unsupervised_Learning/Project/HTE/data/data_preprocessed_tbi_individuals.csv")
 ```
