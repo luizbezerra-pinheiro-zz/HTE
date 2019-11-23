@@ -4,9 +4,10 @@ Heterogeneous Treatment Effect
 
 ### Useful Links:
 
-##Dropbox - https://www.dropbox.com/sh/tm93vs56gt5ffj4/AAB9QedxZZqAWmgCB_fkFagWa?dl=0
+#### Dropbox - https://www.dropbox.com/sh/tm93vs56gt5ffj4/AAB9QedxZZqAWmgCB_fkFagWa?dl=0
 
-##Drive - https://drive.google.com/drive/folders/1NaXoBegVDjQAe__EChVguT0VXuPpmX8Z?usp=sharing
+#### Drive - https://drive.google.com/drive/folders/1NaXoBegVDjQAe__EChVguT0VXuPpmX8Z?usp=sharing
+#### Trello - https://trello.com/b/2G0Mhg0T/hte-map573
 
 Crash - https://crash3.lshtm.ac.uk 
 
