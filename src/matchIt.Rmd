@@ -1,0 +1,157 @@
+  ---
+title: "HTE Notebook"
+authors: "Luiz Pinheiro, Hemerson Lucas, Matheus Matos, Guilherme Marra, João do IME"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+MatchIt implementation for Treatment Effect of Tranexamic Acid on TBI patients Estimation
+
+Load library and dataset
+```{r}
+library("MatchIt")
+library("Amelia")
+library('Zelig')
+#setwd("/home/luiz/Documents/Projects/HTE/Documents/Projects/HTE/")
+pretreated_dataset <- read.csv("/home/luiz/Documents/Projects/HTE/data/data_preprocessed_tbi_individuals.csv", header = TRUE)
+```
+
+```{r}
+# pretreated_dataset
+summary(pretreated_dataset)
+
+# The Osmotherapy.ph bugs the amelia process
+# To fix the Osmotherapy.ph error, we'll set all Na values to 'Rien'
+pretreated_dataset$Osmotherapy.ph[is.na(pretreated_dataset$Osmotherapy.ph)] <- 'Rien'
+
+# Filling the NA to apply MatchIT with Multiple Imputation, choice: Amelia
+m = 5
+noms = c("Anticoagulant.therapy", "Antiplatelet.therapy", "Pupil.anomaly.ph", "Cardiac.arrest.ph", "Pupil.anomaly", "IICP")
+idvars = c("Improv.anomaly.osmo", "Osmotherapy.ph", "Osmotherapy", "Death") #, "Osmotherapy.ph"
+a.out <- amelia(pretreated_dataset, m = m, noms = noms, idvars = idvars)
+write.amelia(a.out, file.stem = '/home/luiz/Documents/Projects/HTE/data/comp_pretreated_dataset')
+
+#comp_pretreated_dataset = a.out$imputations$imp1
+
+# Let's do a Subclassification Matching on each imp and save each matched the mateched dataset in a csv
+
+for (i in c(1:m))
+{
+  comp_pretreated_dataset <- read.csv(paste("/home/luiz/Documents/Projects/HTE/data/comp_pretreated_dataset", i, ".csv", sep = ""), header = TRUE)
+  m.out2 <- matchit(Tranexamic.acid ~ Trauma.center + Cardiac.arrest.ph + SBP.ph + DBP.ph + HR.ph + SBP.ph.min + DBP.ph.min + HR.ph.max + Shock.index.ph + Delta.shock.index + Cristalloid.volume + Colloid.volume + HemoCue.init + Delta.hemoCue + Vasopressor.therapy + SpO2.ph.min + AIS.external, data = comp_pretreated_dataset, method = "nearest", subclass = 6)
+
+z.out3 <- zelig(Death ~ Trauma.center + Cardiac.arrest.ph + SBP.ph + DBP.ph + HR.ph + SBP.ph.min + DBP.ph.min + HR.ph.max + Shock.index.ph + Delta.shock.index + Cristalloid.volume + Colloid.volume + HemoCue.init + Delta.hemoCue + Vasopressor.therapy + SpO2.ph.min + AIS.external + distance, data = match.data(m.out2, "control"), model = "ls", by = "subclass")
+
+x.out3 <- setx(z.out3, data = match.data(m.out2, "treat"), fn = NULL, cond = TRUE)
+
+s.out3 <- sim(z.out3, x = x.out3)
+
+summary(s.out3)
+
+m.data <- match.data(m.out2)
+write.csv(m.data, file=paste("/home/luiz/Documents/Projects/HTE/data/matchit/data_matched_tbi_individuals", i,".csv", sep = ""))
+}
+
+
+```
+
+Subclassification - Important: Check other methods for distance (Section 4.1.3 On PDF MatchIt)
+```{r}
+#m.out <- matchit(treat ~ educ + black + hispan, data = lalonde, method = "exact", subclass=0)
+#m.out
+mi_sub.out <- matchit(Tranexamic.acid ~ Trauma.center +
+Cardiac.arrest.ph + 
+SBP.ph + DBP.ph + HR.ph +
+SBP.ph.min + DBP.ph.min + HR.ph.max +
+Shock.index.ph +
+Delta.shock.index +
+Cristalloid.volume + Colloid.volume +
+HemoCue.init +
+Delta.hemoCue +
+Vasopressor.therapy +
+SpO2.ph.min +
+AIS.external, data = comp_pretreated_dataset, method = "subclass", subclass = 5)
+summary(mi_sub.out)
+plot(mi_sub.out)
+
+
+# Model-based estimates
+
+z.out0 <- zelig(Death ~ Tranexamic.acid + Trauma.center + Cardiac.arrest.ph + SBP.ph + DBP.ph + HR.ph + SBP.ph.min + DBP.ph.min + HR.ph.max + Shock.index.ph + Delta.shock.index + Cristalloid.volume + Colloid.volume + HemoCue.init + Delta.hemoCue + Vasopressor.therapy + SpO2.ph.min + AIS.external + distance, data = match.data(mi_sub.out), model = "ls")
+
+x.out0 <- setx(z.out0, Tranexamic.acid  = 0)
+x1.out0 <- setx(z.out0, Tranexamic.acid = 1)
+
+s.out0 <- sim(z.out0, x = x.out0, x1 = x1.out0)
+summary(s.out0)
+
+# Average treatment effect on the treated
+## Nearest neighbor matching
+m.out1 <- matchit(Tranexamic.acid ~ Trauma.center + Cardiac.arrest.ph + SBP.ph + DBP.ph + HR.ph + SBP.ph.min + DBP.ph.min + HR.ph.max + Shock.index.ph + Delta.shock.index + Cristalloid.volume + Colloid.volume + HemoCue.init + Delta.hemoCue + Vasopressor.therapy + SpO2.ph.min + AIS.external, data = comp_pretreated_dataset, method = "nearest")
+
+z.out1 <- zelig(Death ~  Trauma.center + Cardiac.arrest.ph + SBP.ph + DBP.ph + HR.ph + SBP.ph.min + DBP.ph.min + HR.ph.max + Shock.index.ph + Delta.shock.index + Cristalloid.volume + Colloid.volume + HemoCue.init + Delta.hemoCue + Vasopressor.therapy + SpO2.ph.min + AIS.external, data = match.data(m.out1, "control"), model = "ls")
+
+x.out1 <- setx(z.out1, data = match.data(m.out1, "treat"), cond = TRUE)
+
+s.out1 <- sim(z.out1, x = x.out1)
+
+#Another approach to Average Treatment Effect On Treated
+z.out1_1 <- zelig(Death ~  Tranexamic.acid + Trauma.center + Cardiac.arrest.ph + SBP.ph + DBP.ph + HR.ph + SBP.ph.min + DBP.ph.min + HR.ph.max + Shock.index.ph + Delta.shock.index + Cristalloid.volume + Colloid.volume + HemoCue.init + Delta.hemoCue + Vasopressor.therapy + SpO2.ph.min + AIS.external, data = match.data(m.out1), model = "ls")
+z.out1_1 <- ATT(z.out1_1, treatment = "Tranexamic.acid")
+zatt <- get_qi(z.out1_1, qi = "ATT", xvalue = "TE")
+hist(zatt.norm, main = NULL, xlab = "Average Treatment Effect of Tranexamic.acid on the Treated ")
+quantile(zatt, c(0.025, 0.975))
+
+
+# Average Treatment Effect (Overall)
+z.out2 <- zelig(Death ~  Trauma.center + Cardiac.arrest.ph + SBP.ph + DBP.ph + HR.ph + SBP.ph.min + DBP.ph.min + HR.ph.max + Shock.index.ph + Delta.shock.index + Cristalloid.volume + Colloid.volume + HemoCue.init + Delta.hemoCue + Vasopressor.therapy + SpO2.ph.min + AIS.external, data = match.data(m.out1, "treat"), model = "ls") 
+
+x.out2 <- setx(z.out2, data = match.data(m.out1, "control"), cond = TRUE)
+
+s.out2 <- sim(z.out2, x = x.out2)
+
+ate.all <- c(s.out1$qi$ev, -s.out2$qi$ev)
+
+s.out1$qi$ev
+s.out2
+s.out1
+# Subclassification
+
+m.out2 <- matchit(Tranexamic.acid ~ Trauma.center + Cardiac.arrest.ph + SBP.ph + DBP.ph + HR.ph + SBP.ph.min + DBP.ph.min + HR.ph.max + Shock.index.ph + Delta.shock.index + Cristalloid.volume + Colloid.volume + HemoCue.init + Delta.hemoCue + Vasopressor.therapy + SpO2.ph.min + AIS.external, data = comp_pretreated_dataset, method = "subclass", subclass = 4)
+
+z.out3 <- zelig(Death ~ Trauma.center + Cardiac.arrest.ph + SBP.ph + DBP.ph + HR.ph + SBP.ph.min + DBP.ph.min + HR.ph.max + Shock.index.ph + Delta.shock.index + Cristalloid.volume + Colloid.volume + HemoCue.init + Delta.hemoCue + Vasopressor.therapy + SpO2.ph.min + AIS.external + distance, data = match.data(m.out2, "control"), model = "ls", by = "subclass")
+
+x.out3 <- setx(z.out3, data = match.data(m.out2, "treat"), fn = NULL, cond = TRUE)
+
+s.out3 <- sim(z.out3, x = x.out3)
+
+summary(s.out3)
+
+m.data <- match.data(m.out2)
+write.csv(m.data, file="../data/data_matched_tbi_individuals.csv")
+```
+
+
+
+Optimal Matching - Finds the matched samples with the smallest average absolute distance across all the matched pairs.
+```{r}
+
+mi.optimal <- matchit(Tranexamic.acid ~ Trauma.center +
+Cardiac.arrest.ph + 
+SBP.ph + DBP.ph + HR.ph +
+SBP.ph.min + DBP.ph.min + HR.ph.max +
+Shock.index.ph +
+Delta.shock.index +
+Cristalloid.volume + Colloid.volume +
+HemoCue.init +
+Delta.hemoCue +
+Vasopressor.therapy +
+SpO2.ph.min +
+AIS.external, data = comp_pretreated_dataset, method = "optimal", subclass = 6)
+  summary(mi.optimal)
+```
+
+```{r}
+row.names(m.out$match.matrix)
+```
