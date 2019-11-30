@@ -1,0 +1,57 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+# Clear any existing variables
+rm(list = ls())
+
+# Set seed for reproducibility
+set.seed(1)
+
+# Load pretreated_dataset
+pretreated_dataset <- read.csv("/home/luiz/Documents/Projects/HTE/data/data_preprocessed_tbi_individuals.csv", header = TRUE)
+
+
+# These are the covariates we'll use
+
+cts_variables_names <- c("SBP.ph", "DBP.ph", "HR.ph", "Shock.index.ph", "Delta.shock.index", "Cristalloid.volume", "Colloid.volume", "HemoCue.init", "Delta.hemoCue", "SpO2.ph.min")
+
+binary_variables_names <- c("Vasopressor.therapy", "AIS.external", "Cardiac.arrest.ph")
+
+categorical_variables_names <- c("Trauma.center")
+
+covariates <- c(cts_variables_names, binary_variables_names, categorical_variables_names)
+
+all_variables_names <- c(covariates, "Death", "Tranexamic.acid")
+
+# Extracting and scaling continuous variables
+scaled_cts_covariates <- pretreated_dataset %>%
+  dplyr::select(cts_variables_names) %>%
+  scale()
+
+# Extracting  indicator variables
+binary_covariates <- pretreated_dataset %>%
+  dplyr::select(binary_variables_names)
+categorical_covariates <- pretreated_dataset %>%
+  dplyr::select(categorical_variables_names)
+
+# Extracting outcome and treatment
+
+outcome <- pretreated_dataset %>% dplyr::select(Death)
+treatment <- pretreated_dataset %>% dplyr::select(Tranexamic.acid) 
+
+# Setting up the data with only the variables of interest, and renaming columns
+df <- data.frame(scaled_cts_covariates, binary_covariates, categorical_covariates, outcome, treatment) %>% plyr::rename(c(Tranexamic.acid = "W", Death = "Y"))
+
+
+summary(df)
+df
+```
+
+```{r}
+pretreated_dataset[base::sample(which(pretreated_dataset$Tranexamic.acid == 1), 10), names(pretreated_dataset)]
+```
