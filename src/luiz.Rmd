@@ -1,6 +1,8 @@
 ---
 title: "R Notebook"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 ```{r}
@@ -27,8 +29,11 @@ rm(list = ls())
 # Set seed for reproducibility
 set.seed(1)
 
+dir_HTE = "~/Documentos/X/3A/P1/MAP 573 - Unsupervised Learning/HTE/"
+dir_data = "data/data_preprocessed_tbi_individuals.csv"
+
 # Load pretreated_dataset
-pretreated_dataset <- read.csv("/home/luiz/Documents/Projects/HTE/data/data_preprocessed_tbi_individuals.csv", header = TRUE)
+pretreated_dataset <- read.csv(paste(dir_HTE, dir_data, sep = ""), header = TRUE)
 
 # These are the covariates we'll use
 
@@ -93,14 +98,17 @@ Propensity Score Calculation
 
 ```{r}
 # Computing the propensity socre by logistic regression of W on X
-p_logistic.fit <- glm(Wcomp ~ as.matrix(sapply(Xcomp, as.numeric)), family = "binomial")
-p_logistic <- predict(p_logistic.fit, type = "response")
-hist(p_logistic)
+p_logistic <- function(dataset){
+  p_logistic.fit <- glm(Wcomp ~ as.matrix(sapply(Xcomp, as.numeric)), family = "binomial")
+  p_logistic <- predict(p_logistic.fit, type = "response")
+  hist(p_logistic)
+  return (p_logistic)
+}
 
-dfcomp$p.logistic <- p_logistic
+dfcomp$p.logistic <- p_logistic(dfcomp)
 
 # Let's check if the regression is well calibrated
-{plot(smooth.spline(p_logistic, Wcomp, df = 4))
+{plot(smooth.spline(dfcomp$p.logistic, Wcomp, df = 4))
   abline(0,1)}
 
 #Estimate propensity scores with generalized boosted modeling (GBM)
@@ -133,13 +141,9 @@ ate_condmean_ols <- function(dataset) {
   lm.interact = lm(Y ~ . * W, data = df_centered)
   tau.hat = as.numeric(coef(lm.interact)["W"])
   se.hat = as.numeric(sqrt(vcovHC(lm.interact)["W", "W"]))
-  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+  return ( c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat) )
 }
-tauhat_ols <- ate_condmean_ols(dfcomp)
-print(tauhat_ols)
-```
 
-```{r}
 # Now let's estimate the ATE using Inverse-propensity score weighting
 ipw <- function(dataset, p) {
   W <- dataset$W
@@ -147,15 +151,10 @@ ipw <- function(dataset, p) {
   G <- ((W - p) * Y) / (p * (1-p))
   tau.hat <- mean(G)
   se.hat <- sqrt(var(G) / (length(G) - 1))
-  c(ATE = tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.68 * se.hat)
+  return ( c(ATE = tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.68 * se.hat) )
 }
 
-tauhat_logistic_ipw <- ipw(dfcomp, p_logistic)
-print(tauhat_logistic_ipw)
-```
-```{r prop_score_ols}
 # Now Weighted OLS on W
-
 prop_score_ols <- function(dataset, p) {
   # Pulling relevant columns
   W <- dataset$W
@@ -166,16 +165,9 @@ prop_score_ols <- function(dataset, p) {
   lm.fit <- lm(Y ~ W, data = dataset, weights = weights)
   tau.hat = as.numeric(coef(lm.fit)["W"])
   se.hat = as.numeric(sqrt(vcovHC(lm.fit)["W", "W"]))
-  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+  return ( c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat) )
 }
 
-tauhat_pscore_ols <- prop_score_ols(dfcomp, p_logistic)
-print(tauhat_pscore_ols)
-
-```
-
-
-```{r aipw}
 # Now the double robust
 aipw_ols <- function(dataset, p) {
   
@@ -195,44 +187,45 @@ aipw_ols <- function(dataset, p) {
     ((dataset$W - p) * (dataset$Y - actual_pred)) / (p * (1 - p))
   tau.hat <- mean(G)
   se.hat <- sqrt(var(G) / (length(G) - 1))
-  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+  return ( c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat) )
 }
 
-tauhat_lin_logistic_aipw <- aipw_ols(dfcomp, p_logistic)
-print(tauhat_lin_logistic_aipw)
-```
 
+# results
+
+tauhat_ols <- ate_condmean_ols(dfcomp)
+tauhat_logistic_ipw <- ipw(dfcomp, dfcomp$p.logistic)
+tauhat_pscore_ols <- prop_score_ols(dfcomp, dfcomp$p.logistic)
+tauhat_lin_logistic_aipw <- aipw_ols(dfcomp, dfcomp$p.logistic)
+
+#print of the results
+results_prop = rbind(tauhat_ols, 
+                     tauhat_logistic_ipw, 
+                     tauhat_pscore_ols, 
+                     tauhat_lin_logistic_aipw)
+print(results_prop)
+
+```
 
 Now since we have an estimation of the ATE, let's cluster the dataset using the propensity score as a distance using different clustering methods
-
-
-Estimating ATT #CAGA DPS ARRUMA
-```{r}
-get_estimated_treatment <- function(matching_output, zeFormula){
-  z.out <- zelig(zeFormula, data = match.data(matching_output, "control"), model = "ls")
-  x.out <- setx(z.out, data = match.data(matching_output, "treat"), cond = TRUE)
-  s.out <- sim(z.out, x = x.out)
-  return (s.out)
-}
-zeFormula = Ycomp ~ as.matrix(sapply(Xcomp, as.numeric))
-```
 
 
 Estimating TE (Treatment Effect on Treated) using a matched 1:1 dataset #TO FAZENDO - LUIZ
 
 ```{r}
-estimate_treatment_effect <- function(dataset, match.matrix){
-  treated <- dataset %>% filter(W == 1) %>% select(X, Y)
-  control <- dataset %>% filter(W == 0) %>% select(X, Y)
-  for (i in treated)
-    i$Y_matched <- control %>% filter(X == match.matrix[i$X]) %>% select(Y)
-}
 
-treated <- dfcomp %>% filter(W == 1) %>% select(X, Y)
-control <- dfcomp %>% filter(W == 0) %>% select(X, Y)
-
-for (i in treated)
-    i$Y_matched <- control %>% filter(X == greedymatching$match.matrix[i$X]) %>% select(Y)
+# estimate_treatment_effect <- function(dataset, match.matrix){
+#   treated <- dataset %>% filter(W == 1) %>% select(X, Y)
+#   control <- dataset %>% filter(W == 0) %>% select(X, Y)
+#   for (i in treated)
+#     i$Y_matched <- control %>% filter(X == match.matrix[i$X]) %>% select(Y)
+# }
+# 
+# treated <- dfcomp %>% filter(W == 1) %>% select(X, Y)
+# control <- dfcomp %>% filter(W == 0) %>% select(X, Y)
+# 
+# for (i in treated)
+#     i$Y_matched <- control %>% filter(X == greedymatching$match.matrix[i$X]) %>% select(Y)
 
 ```
 
@@ -240,14 +233,16 @@ for (i in treated)
 I) Clustering using Matching - Using the library MatchIt # MUDAR NOME TA ERRADO SSAPORRA
 i) Nearest-Neighbor Propensity Score Matching, with Propensity Score estimated with Logistic Regression # É 1:1
 ```{r greedymatching}
-# Matching on Nearest Neighbor
-neighbor_matching <- function(psFormula, distance, data, method = "nearest", ...) {
-  return(matchit(psFormula, distance = distance, data = data, method = method, ...))
-}
 
-greedymatching <- neighbor_matching(psFormula, distance = p_logistic, data = dfcomp, method = "nearest")
-#greedy_s.out <- get_estimated_treatment(greedymatching, zeFormula)
-#summary(greedy_s.out)
+# # Matching on Nearest Neighbor
+# neighbor_matching <- function(psFormula, distance, data, method = "nearest", ...) {
+#   return(matchit(psFormula, distance = distance, data = data, method = method, ...))
+# }
+# 
+# greedymatching <- neighbor_matching(psFormula, distance = p_logistic, data = dfcomp, method = "nearest")
+# #greedy_s.out <- get_estimated_treatment(greedymatching, zeFormula)
+# #summary(greedy_s.out)
+
 ```
 
 
@@ -255,19 +250,48 @@ ii) Nearest-Neighbor Propensity Score Matching, with Propensity Score estimated 
 ```{r}
 
 ```
-
+  
 
 Genetic Matching (1:1)
 ```{r}
-# perform genetic matching based on all the covariates and the propensity score estimated from GMB
-calc_geneticMatchin_with_gmb = function(data, psFormula, zeFormula, Ps_scores){
-  geneticMatching <- matchit(psFormula, distance = Ps_scores,
-                           data = data, method = "genetic",pop.size=1000,
-                           fit.func = "pvals",
-                           estimand = "ATT", replace = T, ties = T, discard = "both")
-}
-
-calc_geneticMatchin_with_gmb(dfcomp, psFormula, zeFormula, Ps_scores = dfcomp$propensity.score.gbm)
+# # perform genetic matching based on all the covariates and the propensity score estimated from GMB
+# calc_geneticMatchin_with_gmb = function(data, psFormula, zeFormula, Ps_scores){
+#   geneticMatching <- matchit(psFormula, distance = Ps_scores,
+#                            data = data, method = "genetic",pop.size=1000,
+#                            fit.func = "pvals",
+#                            estimand = "ATT", replace = T, ties = T, discard = "both")
+# }
+# 
+# calc_geneticMatchin_with_gmb(dfcomp, psFormula, zeFormula, Ps_scores = dfcomp$propensity.score.gbm)
 ```
 
 
+Estimating ATT #CAGA DPS ARRUMA
+```{r}
+# get_estimated_treatment <- function(matching_output, zeFormula){
+#   z.out <- zelig(zeFormula, data = match.data(matching_output, "control"), model = "ls")
+#   x.out <- setx(z.out, data = match.data(matching_output, "treat"), cond = TRUE)
+#   s.out <- sim(z.out, x = x.out)
+#   return (s.out)
+# }
+# zeFormula = Ycomp ~ as.matrix(sapply(Xcomp, as.numeric))
+```
+
+Clustering with K-Means
+
+```{r}
+n_cluster <- 10
+set.seed(1)
+temp_kmeans <- dfcomp
+km <- kmeans(temp_kmeans[, 3:15], n_cluster)
+temp_kmeans <- cbind(temp_kmeans, cluster = km$cluster)
+result <- c()
+Cluster <- c()
+for (i in 1:n_cluster){
+  #print(paste("Treated: ",nrow(temp_kmeans %>% filter(cluster == i, W == 1))))
+  #print(paste("Control: ",nrow(temp_kmeans %>% filter(cluster == i, W == 0))))
+  Cluster <- c(i, treated = nrow(temp_kmeans %>% filter(cluster == i, W == 1)), control = nrow(temp_kmeans %>% filter(cluster == i, W == 0)) )
+  result <- rbind(result, Cluster)
+}
+print(result)
+```
