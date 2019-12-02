@@ -9,12 +9,12 @@ output: html_notebook
 library("Amelia")
 library("MatchIt")
 library("Zelig")
-
-library("wiggleplotr")
+library("sandwich")
+#library("wiggleplotr")
 library("dplyr")
-library("GenomicRanges")
-library("GenomicFeatures")
-library("biomaRt")
+#library("GenomicRanges")
+#library("GenomicFeatures")
+#library("biomaRt")
 ```
 
 
@@ -29,8 +29,6 @@ set.seed(1)
 # Load pretreated_dataset
 pretreated_dataset <- read.csv("/home/luiz/Documents/Projects/HTE/data/data_preprocessed_tbi_individuals.csv", header = TRUE)
 
-pretreated_dataset
-
 # These are the covariates we'll use
 
 cts_variables_names <- c("SBP.ph", "DBP.ph", "HR.ph", "Shock.index.ph", "Delta.shock.index", "Cristalloid.volume", "Colloid.volume", "HemoCue.init", "Delta.hemoCue", "SpO2.ph.min")
@@ -38,8 +36,6 @@ cts_variables_names <- c("SBP.ph", "DBP.ph", "HR.ph", "Shock.index.ph", "Delta.s
 binary_variables_names <- c("Vasopressor.therapy", "AIS.external", "Cardiac.arrest.ph")
 
 levels(pretreated_dataset$Cardiac.arrest.ph) <- c(0,1)
-
-pretreated_dataset
 
 categorical_variables_names <- c("X", "Trauma.center")
 
@@ -199,18 +195,31 @@ zeFormula = Ycomp ~ as.matrix(sapply(Xcomp, as.numeric))
 psFormula = as.formula(paste("Y ~", paste(covariates, collapse = " + ")))
 ```
 
+
+Estimating TE (Treatment Effect on Treated) using a matched 1:1 dataset
+
+```{r}
+estimate_treatment_effect <- function(dataset, match.matrix){
+  treated <- dataset %>% filter(W == 1) %>% select(X, Y)
+  control <- dataset %>% filter(W == 0) %>% select(X, Y)
+  treated$Y_matched <- 
+}
+
+
+```
+
+
 I) Clustering using Matching - Using the library MatchIt
 i) Nearest-Neighbor Propensity Score Matching, with Propensity Score estimated with Logistic Regression
 ```{r greedymatching}
 # Matching on Nearest Neighbor
 neighbor_matching <- function(psFormula, distance, data, method = "nearest", ...) {
-  print(paste(psFormula, distance = distance, data = data, method = method, ...))
   return(matchit(psFormula, distance = distance, data = data, method = method, ...))
 }
 
-greedymatching <- neighbor_matching(psFormula, distance = p_logistic, data = dfcomp, method = "subclass", subclass = 6 )
-greedy_s.out <- get_estimated_treatment(greedymatching, zeFormula)
-summary(greedy_s.out)
+greedymatching <- neighbor_matching(psFormula, distance = p_logistic, data = dfcomp, method = "nearest")
+#greedy_s.out <- get_estimated_treatment(greedymatching, zeFormula)
+#summary(greedy_s.out)
 ```
 
 
@@ -248,7 +257,7 @@ calc_geneticMatchin_with_gmb = function(data, psFormula, zeFormula, Ps_scores){
                            estimand = "ATT", replace = T, ties = T, discard = "both")
 }
 
-
+calc_geneticMatchin_with_gmb(dfcomp, psFormula, zeFormula, Ps_scores = dfcomp$propensity.score.gbm)
 ```
 
 
