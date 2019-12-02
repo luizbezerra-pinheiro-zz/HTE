@@ -10,6 +10,7 @@ library("Amelia")
 library("MatchIt")
 library("Zelig")
 library("sandwich")
+library("twang") # library for ps() function
 #library("wiggleplotr")
 library("dplyr")
 #library("GenomicRanges")
@@ -66,6 +67,9 @@ df[, binary_variables_names] <- sapply(df[, binary_variables_names], as.numeric)
 
 ```
 
+
+Missing Values
+
 ```{r}
 # Now let's complet the dataframe using Amelia
 m = 1
@@ -82,7 +86,7 @@ Wcomp = dfcomp$W
 
 ```
 
-
+Propensity Score Calculation
 
 ```{r}
 # Computing the propensity socre by logistic regression of W on X
@@ -90,12 +94,29 @@ p_logistic.fit <- glm(Wcomp ~ as.matrix(sapply(Xcomp, as.numeric)), family = "bi
 p_logistic <- predict(p_logistic.fit, type = "response")
 hist(p_logistic)
 
-dfcomp$propensity.score.logistic <- p_logistic
+dfcomp$p.logistic <- p_logistic
 
 # Let's check if the regression is well calibrated
 {plot(smooth.spline(p_logistic, Wcomp, df = 4))
   abline(0,1)}
+
+#Estimate propensity scores with generalized boosted modeling (GBM)
+gbm_ps <- function(dataset, psFormula){
+  # es: refers to standardized ef-fect size.
+  myGBM <- ps(psFormula, data = dataset, n.trees=10000, interaction.depth=4,
+              shrinkage=0.01, stop.method=c("es.max"), estimand = "ATT",
+              verbose=TRUE)
+
+  #extract estimated propensity scores from object
+  gbm_estimations <- myGBM$ps[, 1]
+  # notice here we do not need to
+  return(gbm_estimations)
+}
+p_gbm <- gbm_ps(dfcomp, psFormula = psFormula)
+dfcomp$propensity.score.gbm <- p_gbm
+hist(dfcomp$propensity.score.gbm)
 ```
+
 
 
 ```{r ols_regression}
@@ -117,7 +138,6 @@ print(tauhat_ols)
 
 ```{r}
 # Now let's estimate the ATE using Inverse-propensity score weighting
-
 ipw <- function(dataset, p) {
   W <- dataset$W
   Y <- dataset$Y
@@ -183,7 +203,7 @@ print(tauhat_lin_logistic_aipw)
 Now since we have an estimation of the ATE, let's cluster the dataset using the propensity score as a distance using different clustering methods
 
 
-Estimating ATT
+Estimating ATT #CAGA DPS ARRUMA
 ```{r}
 get_estimated_treatment <- function(matching_output, zeFormula){
   z.out <- zelig(zeFormula, data = match.data(matching_output, "control"), model = "ls")
@@ -192,25 +212,31 @@ get_estimated_treatment <- function(matching_output, zeFormula){
   return (s.out)
 }
 zeFormula = Ycomp ~ as.matrix(sapply(Xcomp, as.numeric))
-psFormula = as.formula(paste("Y ~", paste(covariates, collapse = " + ")))
+psFormula = as.formula(paste("W ~", paste(covariates, collapse = " + ")))
 ```
 
 
-Estimating TE (Treatment Effect on Treated) using a matched 1:1 dataset
+Estimating TE (Treatment Effect on Treated) using a matched 1:1 dataset #TO FAZENDO - LUIZ
 
 ```{r}
 estimate_treatment_effect <- function(dataset, match.matrix){
   treated <- dataset %>% filter(W == 1) %>% select(X, Y)
   control <- dataset %>% filter(W == 0) %>% select(X, Y)
-  treated$Y_matched <- 
+  for (i in treated)
+    i$Y_matched <- control %>% filter(X == match.matrix[i$X]) %>% select(Y)
 }
 
+treated <- dfcomp %>% filter(W == 1) %>% select(X, Y)
+control <- dfcomp %>% filter(W == 0) %>% select(X, Y)
+
+for (i in treated)
+    i$Y_matched <- control %>% filter(X == greedymatching$match.matrix[i$X]) %>% select(Y)
 
 ```
 
 
-I) Clustering using Matching - Using the library MatchIt
-i) Nearest-Neighbor Propensity Score Matching, with Propensity Score estimated with Logistic Regression
+I) Clustering using Matching - Using the library MatchIt # MUDAR NOME TA ERRADO SSAPORRA
+i) Nearest-Neighbor Propensity Score Matching, with Propensity Score estimated with Logistic Regression # É 1:1
 ```{r greedymatching}
 # Matching on Nearest Neighbor
 neighbor_matching <- function(psFormula, distance, data, method = "nearest", ...) {
@@ -225,29 +251,11 @@ greedymatching <- neighbor_matching(psFormula, distance = p_logistic, data = dfc
 
 ii) Nearest-Neighbor Propensity Score Matching, with Propensity Score estimated with XGBoost
 ```{r}
-# library for ps() function
-library(twang)
 
-#Estimate propensity scores with generalized boosted modeling (GBM)
-gbm_ps <- function(dataset, psFormula){
-  # es: refers to standardized ef-fect size.
-  myGBM <- ps(psFormula, data = dataset, n.trees=10000, interaction.depth=4,
-              shrinkage=0.01, stop.method=c("es.max"), estimand = "ATT",
-              verbose=TRUE)
-
-  #extract estimated propensity scores from object
-  gbm_estimations <- myGBM$ps[, 1]
-  # notice here we do not need to
-  return(gbm_estimations)
-}
-p_gbm <- gbm_ps(dfcomp, psFormula = psFormula)
-dfcomp$propensity.score.gbm <- p_gbm
-dfcomp
-hist(dfcomp$propensity.score.gbm)
 ```
 
 
-
+Genetic Matching (1:1)
 ```{r}
 # perform genetic matching based on all the covariates and the propensity score estimated from GMB
 calc_geneticMatchin_with_gmb = function(data, psFormula, zeFormula, Ps_scores){
