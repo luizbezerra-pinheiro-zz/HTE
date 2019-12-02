@@ -65,6 +65,9 @@ df <- data.frame(categorical_covariates, scaled_cts_covariates, binary_covariate
 # Change type of binary variables
 df[, binary_variables_names] <- sapply(df[, binary_variables_names], as.numeric)
 
+# Define the Formula used on the treatment
+psFormula = as.formula(paste("W ~", paste(covariates, collapse = " + ")))
+
 ```
 
 
@@ -212,7 +215,6 @@ get_estimated_treatment <- function(matching_output, zeFormula){
   return (s.out)
 }
 zeFormula = Ycomp ~ as.matrix(sapply(Xcomp, as.numeric))
-psFormula = as.formula(paste("W ~", paste(covariates, collapse = " + ")))
 ```
 
 
