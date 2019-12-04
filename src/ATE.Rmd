@@ -1,0 +1,536 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# Load the libraries
+
+library("Amelia")
+library("MatchIt")
+library("Zelig")
+library("sandwich")
+library("twang") # library for ps() function
+library("cluster")
+library("rlist") # Append
+library("dplyr")
+```
+
+
+Load pre-treated data
+```{r}
+# Clear any existing variables
+rm(list = ls())
+
+# Set seed for reproducibility
+set.seed(1)
+
+dir_HTE = "~/Documents/Projects/HTE/"
+dir_data = "data/data_preprocessed_tbi_individuals.csv"
+
+# Load pretreated_dataset
+pretreated_dataset <- read.csv(paste(dir_HTE, dir_data, sep = ""), header = TRUE)
+pretreated_dataset <- pretreated_dataset %>% plyr::rename(c(Tranexamic.acid = "W", Death = "Y"))
+levels(pretreated_dataset$Cardiac.arrest.ph) <- c(0,1)
+
+pretreated_dataset
+```
+
+Initial Study on pretreateddata
+```{r}
+# Glasgow Coma Scale (GCS.init)
+
+glasgow_stats <- function (dataset){
+  T_treated <- dataset %>% filter(W == 1) %>% nrow(.)
+  T_control <- dataset %>% filter(W == 0) %>% nrow(.)
+  glasgow_severe <- dataset %>% filter(GCS.init <= 8, GCS.init >= 3)
+  glasgow_moderate <- dataset %>% filter(GCS.init <= 12, GCS.init >= 9)
+  glasgow_mild <- dataset %>% filter(GCS.init <= 15, GCS.init >= 13)
+  glasgow_unknown <- dataset %>% filter(is.na(GCS.init))
+  
+  gw <- list(glasgow_severe, glasgow_moderate, glasgow_mild, glasgow_unknown)
+  res <- c()
+  for (i in gw){
+    n_treated = i %>% filter(W == 1) %>% nrow(.)
+    n_control = i %>% filter(W == 0) %>% nrow(.)
+    stats <- c(n_treated = n_treated, "%_treated" = n_treated/T_treated, n_control = n_control, "%_control" = n_control/T_control)
+    res <- rbind(res, stats)
+  }
+  rownames(res) <- c("Severe (3-8)", "Moderate (9-12)", "Mild (13-15)", "Unknown")
+  return(res)
+}
+
+stats_glasgow <- glasgow_stats(pretreated_dataset)
+
+# Pupil Anomaly (Pupil.anomaly)
+
+pupil_stats <- function (dataset){
+  T_treated <- dataset %>% filter(W == 1) %>% nrow(.)
+  T_control <- dataset %>% filter(W == 0) %>% nrow(.)
+  
+  pupil_none <- dataset %>% filter(Pupil.anomaly == "Non")
+  pupil_one <- dataset %>% filter(Pupil.anomaly == "Anisocorie (unilatérale)")
+  pupil_both <- dataset %>% filter(Pupil.anomaly == "Mydriase (bilatérale)")
+  pupil_unknown <- dataset %>% filter(is.na(Pupil.anomaly))
+  
+  pa <- list(pupil_none, pupil_one, pupil_both, pupil_unknown)
+  res <- c()
+  for (i in pa){
+    n_treated = i %>% filter(W == 1) %>% nrow(.)
+    n_control = i %>% filter(W == 0) %>% nrow(.)
+    stats <- c(n_treated = n_treated, "%_treated" = n_treated/T_treated, n_control = n_control, "%_control" = n_control/T_control)
+    res <- rbind(res, stats)
+  }
+  rownames(res) <- c("Both reacts", "One reacts", "None reacts",  "Unknown")
+  return(res)
+}
+
+stats_pupil <- pupil_stats(pretreated_dataset)
+stats_pupil
+
+
+# Head injury death by severity
+
+death_by_severity_gcs_stats <- function(dataset){
+  # GCS mild to moderate (9-15)
+  n_treated = dataset %>% filter(GCS.init <= 15, GCS.init >= 9, W == 1) %>% nrow()
+  n_treated_dead = dataset %>% filter(GCS.init <= 15, GCS.init >= 9, W==1, Y == 1) %>% nrow()
+  perc_treated_dead =  (n_treated_dead / n_treated) %>% round(digits = 2)
+  
+  n_control = dataset %>% filter(GCS.init <= 15, GCS.init >= 9, W == 0) %>% nrow()
+  n_control_dead = dataset %>% filter(GCS.init <= 15, GCS.init >= 9, W == 0, Y == 1) %>% nrow()
+  perc_control_dead = (n_control_dead / n_control) %>% round(digits = 2)
+  
+  gcs_m <- c(Treated = paste(n_treated_dead, "/", n_treated, "(", perc_treated_dead, "%)", sep = ""), Control = paste(n_control_dead, "/", n_control, "(", perc_control_dead, "%)", sep = ""))
+  
+  # GCS severe (3-8)
+  n_treated = dataset %>% filter(GCS.init <= 8, GCS.init >= 3, W == 1) %>% nrow()
+  n_treated_dead = dataset %>% filter(GCS.init <= 8, GCS.init >= 3, W==1, Y == 1) %>% nrow() 
+  perc_treated_dead =  (n_treated_dead / n_treated) %>% round(digits = 2)
+  
+  n_control = dataset %>% filter(GCS.init <= 8, GCS.init >= 3, W == 0) %>% nrow()
+  n_control_dead = dataset %>% filter(GCS.init <= 8, GCS.init >= 3, W == 0, Y == 1) %>% nrow()
+  perc_control_dead = (n_control_dead / n_control) %>% round(digits = 2)
+  
+  gcs_s <- c(Treated = paste(n_treated_dead, "/", n_treated, "(", perc_treated_dead, "%)", sep = ""), Control = paste(n_control_dead, "/", n_control, "(", perc_control_dead, "%)", sep = ""))
+  
+  # Overrall
+  n_treated = dataset %>% filter(W == 1) %>% nrow()
+  n_treated_dead = dataset %>% filter(W==1, Y == 1) %>% nrow()
+  perc_treated_dead = (n_treated_dead / n_treated) %>% round(digits = 2)
+  
+  n_control = dataset %>% filter(W == 0) %>% nrow()
+  n_control_dead = dataset %>% filter(W == 0, Y == 1) %>% nrow()
+  perc_control_dead = (n_control_dead / n_control) %>% round(digits = 2)
+  
+  gcs_o <- c(Treated = paste(n_treated_dead, "/", n_treated, "(", perc_treated_dead, "%)", sep = ""), Control = paste(n_control_dead, "/", n_control, "(", perc_control_dead, "%)", sep = ""))
+  res <- rbind(gcs_m, gcs_s, gcs_o)
+  row.names(res) <- c("Mild to moderate (9-15)", "Severe (3-8)", "Overrall")
+  return(res)
+}
+
+death_by_severity_pupil_stats <- function(dataset){
+  # Pupil.anomaly Both reacts
+  n_treated = dataset %>% filter(Pupil.anomaly == "Non", W == 1) %>% nrow()
+  n_treated_dead = dataset %>% filter(Pupil.anomaly == "Non", W==1, Y == 1) %>% nrow()
+  perc_treated_dead =  (n_treated_dead / n_treated) %>% round(digits = 2)
+  
+  n_control = dataset %>% filter(Pupil.anomaly == "Non", W == 0) %>% nrow()
+  n_control_dead = dataset %>% filter(Pupil.anomaly == "Non", W == 0, Y == 1) %>% nrow()
+  perc_control_dead = (n_control_dead / n_control) %>% round(digits = 2)
+  
+  pupil_m <- c(Treated = paste(n_treated_dead, "/", n_treated, "(", perc_treated_dead, "%)", sep = ""), Control = paste(n_control_dead, "/", n_control, "(", perc_control_dead, "%)", sep = ""))
+  
+  # Pupil Anomaly any non reactive
+  n_treated = dataset %>% filter(Pupil.anomaly != "Non", !is.na(Pupil.anomaly), W == 1) %>% nrow()
+  n_treated_dead = dataset %>% filter(Pupil.anomaly != "Non", !is.na(Pupil.anomaly), W==1, Y == 1) %>% nrow() 
+  perc_treated_dead =  (n_treated_dead / n_treated) %>% round(digits = 2)
+  
+  n_control = dataset %>% filter(Pupil.anomaly != "Non", !is.na(Pupil.anomaly), W == 0) %>% nrow()
+  n_control_dead = dataset %>% filter(Pupil.anomaly != "Non", !is.na(Pupil.anomaly), W == 0, Y == 1) %>% nrow()
+  perc_control_dead = (n_control_dead / n_control) %>% round(digits = 2)
+  
+  pupil_s <- c(Treated = paste(n_treated_dead, "/", n_treated, "(", perc_treated_dead, "%)", sep = ""), Control = paste(n_control_dead, "/", n_control, "(", perc_control_dead, "%)", sep = ""))
+  
+  # Overrall
+  n_treated = dataset %>% filter(W == 1) %>% nrow()
+  n_treated_dead = dataset %>% filter(W==1, Y == 1) %>% nrow()
+  perc_treated_dead = (n_treated_dead / n_treated) %>% round(digits = 2)
+  
+  n_control = dataset %>% filter(W == 0) %>% nrow()
+  n_control_dead = dataset %>% filter(W == 0, Y == 1) %>% nrow()
+  perc_control_dead = (n_control_dead / n_control) %>% round(digits = 2)
+  
+  pupil_o <- c(Treated = paste(n_treated_dead, "/", n_treated, "(", perc_treated_dead, "%)", sep = ""), Control = paste(n_control_dead, "/", n_control, "(", perc_control_dead, "%)", sep = ""))
+  res <- rbind(pupil_m, pupil_s, pupil_o)
+  row.names(res) <- c("Both reactive", "Any non reactive", "Overrall")
+  return(res)
+}
+
+
+death_by_severity_gcs_stats(pretreated_dataset)
+death_by_severity_pupil_stats(pretreated_dataset)
+
+#write.csv(rbind(stats_glasgow, stats_pupil, death_by_severity_gcs_stats(pretreated_dataset), death_by_severity_pupil_stats(pretreated_dataset)), paste(dir_HTE, "data/stats.csv", sep = ""))
+
+write.csv(stats_glasgow, paste(dir_HTE, "data/stats_glasgow.csv", sep = ""))
+write.csv(stats_pupil, paste(dir_HTE, "data/stats_pupil.csv", sep = ""))
+write.csv(death_by_severity_gcs_stats(pretreated_dataset), paste(dir_HTE, "data/death_glasgow.csv", sep = ""))
+write.csv(death_by_severity_pupil_stats(pretreated_dataset), paste(dir_HTE, "data/death_pupil.csv", sep = ""))
+
+```
+
+Clustering By Severity
+```{r}
+cluster_by_severity <- function(dataset){
+  # Returns 6 datasets:
+  # 1 - GCS mild to moderate (8-15)
+  # 2 - GCS severe (3-7)
+  # 3 - GCS mild to moderate (8-15) and Pupil.Anomaly aggravating (Any non reactive)
+  # 4 - GCS mild to moderate (8-15) and Pupil.Anomaly non-aggravating (both reactive)
+  # 5 - GCS mild to severe (3-7) and Pupil.Anomaly aggravating (Any non reactive)
+  # 6 - GCS mild to severe (3-7) and Pupil.Anomaly non-aggravating (both reactive)
+  
+  # Divise by GCS
+  dataset_GCS_moderate <- dataset %>% filter(GCS.init <= 15, GCS.init >= 9)
+  dataset_GCS_severe <- dataset %>% filter(GCS.init <= 8, GCS.init >= 3)
+  
+  # Subdivise by pupil anomaly aggravation
+  dataset_GCS_moderate_agg <- dataset_GCS_moderate %>% filter(Pupil.anomaly != "Non", !is.na(Pupil.anomaly))
+  dataset_GCS_moderate_no_agg <- dataset_GCS_moderate %>% filter(Pupil.anomaly == "Non")
+  
+  dataset_GCS_severe_agg <- dataset_GCS_severe %>% filter(Pupil.anomaly != "Non", !is.na(Pupil.anomaly))
+  dataset_GCS_severe_no_agg <- dataset_GCS_severe %>% filter(Pupil.anomaly == "Non")
+  
+  return(list(dataset_GCS_moderate, dataset_GCS_severe, dataset_GCS_moderate_agg, dataset_GCS_moderate_no_agg, dataset_GCS_severe_agg, dataset_GCS_severe_no_agg))
+}
+
+dataframes_clustered <- cluster_by_severity(pretreated_dataset)
+
+```
+
+Variables Selection - Select only the pre-treatment variables (Red on figure) for each dataframe
+
+```{r}
+# Selecting the variables used to determine the if the person is getting or not the treatment 
+cts_variables_names <- c("SBP.ph", "DBP.ph", "HR.ph", "Shock.index.ph", "Delta.shock.index", "Cristalloid.volume", "Colloid.volume", "HemoCue.init", "Delta.hemoCue", "SpO2.ph.min")
+binary_variables_names <- c("Vasopressor.therapy", "AIS.external", "Cardiac.arrest.ph")
+
+# categorical_variables_names <- c("Trauma.center") # We will ignore this one
+covariates <- c(cts_variables_names, binary_variables_names)
+
+all_variables_names <- c(covariates, "W", "Y")
+
+reduced_dataframes <- list()
+
+for (df in dataframes_clustered){
+  r_df <- df %>% select("X", all_variables_names) %>% as.data.frame()
+  reduced_dataframes <- list.append(reduced_dataframes, r_df) 
+}
+
+reduced_dataframes
+
+
+```
+
+
+<!-- Variables Selection -->
+
+<!-- ```{r} -->
+<!-- # Selecting the variables used to determine the if the person is getting or not the treatment  -->
+<!-- cts_variables_names <- c("SBP.ph", "DBP.ph", "HR.ph", "Shock.index.ph", "Delta.shock.index", "Cristalloid.volume", "Colloid.volume", "HemoCue.init", "Delta.hemoCue", "SpO2.ph.min") -->
+
+<!-- binary_variables_names <- c("Vasopressor.therapy", "AIS.external", "Cardiac.arrest.ph") -->
+
+<!-- categorical_variables_names <- c("Trauma.center") -->
+
+<!-- covariates <- c(cts_variables_names, binary_variables_names, categorical_variables_names) -->
+
+<!-- all_variables_names <- c(covariates, "Y", "W") -->
+
+
+<!-- # Extracting  continuous variables -->
+<!-- scaled_cts_covariates <- dfcomp %>% -->
+<!--   dplyr::select(cts_variables_names) #%>% scale() -->
+
+<!-- # Extracting  indicator variables -->
+<!-- binary_covariates <- dfcomp %>% -->
+<!--   dplyr::select(binary_variables_names) -->
+<!-- categorical_covariates <- dfcomp %>% -->
+<!--   dplyr::select(categorical_variables_names) -->
+
+<!-- # Extracting outcome and treatment -->
+
+<!-- outcome <- dfcomp %>% dplyr::select(Y) -->
+<!-- treatment <- dfcomp %>% dplyr::select(W)  -->
+
+
+<!-- reduced_dataset <- data.frame(categorical_covariates, scaled_cts_covariates, binary_covariates, outcome, treatment) %>% plyr::rename(c(Tranexamic.acid = "W", Death = "Y")) -->
+
+<!-- reduced_dataset$X <- rownames(reduced_dataset) -->
+
+<!-- # Reorder column X -->
+<!-- reduced_dataset <- reduced_dataset[, c("X", colnames(reduced_dataset)[colnames(reduced_dataset) != "X"])] -->
+
+
+<!-- ``` -->
+
+
+Filling Missing Values with MICE
+```{r}
+
+completeData <- function(dataset, idvars, m_){
+  init = mice(dataset, maxit=0) 
+  predM = init$predictorMatrix
+  predM[, idvars] <- 0
+  tempData <- mice(dataset, predictorMatrix=predM, m=m_,maxit=10,meth= "pmm",seed=500)
+  #dfs <- list()
+  #for (i in c(1:m_))
+  #{
+  df <- complete(tempData, 1) %>% as.data.frame(.)
+  #write.csv(dfs[[i]], file=paste("/home/luiz/Documents/Projects/HTE/data/MICE_pretreated_dataset_",i,".csv", sep = ""))
+  #}
+  return (df)
+}
+
+#Some variables of our dataset are only control variables, it means they shouldn't be used for predictions, as for example the pacient id(X)
+idvars <- c("X")
+m_ <- 1
+
+completed_dataframes <- list()
+for (df in reduced_dataframes){
+  c_df <- completeData(df, idvars = idvars, m_)
+  completed_dataframes <- list.append(completed_dataframes, c_df)
+}
+completed_dataframes
+```
+
+Standardize the continous variables
+```{r}
+for (i in 1:length(completed_dataframes)){
+  completed_dataframes[[i]][, cts_variables_names] <- completed_dataframes[[i]][, cts_variables_names] %>%  scale()
+}
+
+completed_dataframes
+```
+
+
+Propensity score calculation for each cluster 
+```{r}
+# Computing the propensity socre by logistic regression of W on X
+p_logistic <- function(dataset){
+  X = dataset[, !names(dataset) %in% c("Y", "W", "X")]
+  Y = dataset$Y
+  W = dataset$W
+  p_logistic.fit <- glm(W ~ as.matrix(sapply(X, as.numeric)), family = "binomial")
+  p_logistic <- predict(p_logistic.fit, type = "response")
+  hist(p_logistic)
+  return (p_logistic)
+}
+
+#Estimate propensity scores with generalized boosted modeling (GBM)
+gbm_ps <- function(dataset, psFormula){
+  # es: refers to standardized ef-fect size.
+  myGBM <- ps(psFormula, data = dataset, n.trees=10000, interaction.depth=4,
+              shrinkage=0.01, stop.method=c("es.max"), estimand = "ATT",
+              verbose=TRUE)
+
+  #extract estimated propensity scores from object
+  gbm_estimations <- myGBM$ps[, 1]
+  # notice here we do not need to
+  return(gbm_estimations)
+}
+
+# Let's define the formula used to calculate the propensity score
+psFormula = as.formula(paste("W ~", paste(covariates, collapse = " + ")))
+
+for (i in 1:length(completed_dataframes)){
+  completed_dataframes[[i]]$p.gbm <- gbm_ps(completed_dataframes[[i]], psFormula)
+  #print(p_logistic(df))
+  #completed_dataframes[[i]] <- cbind(completed_dataframes[[i]], p.logistic = p_logistic(df))
+}
+
+# Covert all dataset to numeric
+for (i in 1:length(completed_dataframes)){
+   completed_dataframes[[i]][, binary_variables_names] <-  completed_dataframes[[i]][, binary_variables_names] %>% sapply(as.numeric) %>% as.data.frame(.)  
+}
+
+
+#completed_dataframes[[1]]
+
+#write.csv(completed_dataframes[[1]], file = paste(dir_HTE, "data/moderate_GCS_dataset.csv", sep = ""))
+
+
+```
+
+
+ATE estimations 
+```{r}
+# We first define the functions
+
+# Direct conditional mean estimation
+# Let's define the conditional average treatment effect (CATE)
+ate_condmean_ols <- function(dataset) {
+  df_centered = data.frame(scale(dataset[, !names(dataset) %in% c("X", "p.logistic", "p.gbm")], center = TRUE, scale = FALSE))
+  # Running OLS with full interactions is like running OLS separately on
+  # the treated and controls. If the design matrix has been pre-centered,
+  # then the W-coefficient corresponds to the ATE.
+  lm.interact = lm(Y ~ . * W, data = df_centered)
+  tau.hat = as.numeric(coef(lm.interact)["W"])
+  se.hat = as.numeric(sqrt(vcovHC(lm.interact, type = "HC")["W", "W"]))
+  return ( c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat) )
+}
+
+# Now let's estimate the ATE using Inverse-propensity score weighting
+ipw <- function(dataset, p) {
+  W <- dataset$W
+  Y <- dataset$Y
+  G <- ((W - p) * Y) / (p * (1-p))
+  tau.hat <- mean(G)
+  se.hat <- sqrt(var(G) / (length(G) - 1))
+  return ( c(ATE = tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.68 * se.hat) )
+}
+
+# Now Weighted OLS on W
+prop_score_ols <- function(dataset, p) {
+  # Pulling relevant columns
+  W <- dataset$W
+  Y <- dataset$Y
+  # Computing weights
+  weights <- (W / p) + ((1 - W) / (1 - p))
+  # OLS
+  lm.fit <- lm(Y ~ W, data = dataset[, !names(dataset) %in% c("X", "p.logistic", "p.gbm")], weights = weights)
+  tau.hat = as.numeric(coef(lm.fit)["W"])
+  se.hat = as.numeric(sqrt(vcovHC(lm.fit, type = "HC")["W", "W"]))
+  return ( c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat) )
+}
+
+# Now the double robust
+
+aipw_ols <- function(dataset, p) {
+
+  ols.fit = lm(Y ~ W * ., data = dataset[, !names(dataset) %in% c("X", "p.logistic", "p.gbm", "Trauma.center")])
+
+  dataset.treatall = dataset
+  dataset.treatall$W = 1
+  treated_pred = predict(ols.fit, dataset.treatall)
+
+  dataset.treatnone = dataset
+  dataset.treatnone$W = 0
+  control_pred = predict(ols.fit, dataset.treatnone)
+
+  actual_pred = predict(ols.fit, dataset)
+
+  G <- treated_pred - control_pred +
+    ((dataset$W - p) * (dataset$Y - actual_pred)) / (p * (1 - p))
+  tau.hat <- mean(G)
+  se.hat <- sqrt(var(G) / (length(G) - 1))
+  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+}
+```
+
+```{r}
+# Now we estimate the ATE for each cluster using multiple methods
+condmeans_estimations <- c()
+aipw_estimations <- c()
+for (df in completed_dataframes) {
+  n_treated = df %>% filter(W == 1) %>% nrow()
+  n_control = df %>% filter(W == 0) %>% nrow()
+  mean_p.gbm = mean(df[, "p.gbm"])
+  condmeans_estimations <- rbind(condmeans_estimations, c(n_treated = n_treated, n_control = n_control, p_mean = mean_p.gbm, ate_condmean_ols(df)))
+  aipw_estimations <- rbind(aipw_estimations, c(n_treated = n_treated, n_control = n_control, p_mean = mean_p.gbm, aipw_ols(df, df$p.gbm)))
+}
+rownames(condmeans_estimations) <- c("GCS Mild/Moderate (8-15)", "GCS Severe (3-7)", "GCS Mild/Moderate + Anomaly", "GCS Mild/Moderate + no Anomaly", "GCS Severe + Anomaly", "GCS Severe + no Anomaly")
+rownames(aipw_estimations) <- c("GCS Mild/Moderate (8-15)", "GCS Severe (3-7)", "GCS Mild/Moderate + Anomaly", "GCS Mild/Moderate + no Anomaly", "GCS Severe + Anomaly", "GCS Severe + no Anomaly")
+
+```
+Matching to try to reduce cofounding
+```{r}
+# Now let's do a matching in each dataset to try to reduce confounding
+
+matched_dataframes <- list()
+for (df in completed_dataframes){
+  m_df <- matchit(psFormula, data = df, method = "genetic", discard = "control") %>% match.data() %>% as.data.frame()
+  matched_dataframes <- list.append(matched_dataframes, m_df)
+}
+```
+
+```{r}
+# Now we re-estimate the ATE for each cluster after the matching using multiple methods
+condmeans_estimations_matched <- c()
+aipw_estimations_matched <- c()
+for (df in matched_dataframes) {
+  n_treated = df %>% filter(W == 1) %>% nrow()
+  n_control = df %>% filter(W == 0) %>% nrow()
+  mean_p.gbm = mean(df[, "p.gbm"])
+  condmeans_estimations_matched <- rbind(condmeans_estimations_matched, c(n_treated = n_treated, n_control = n_control, p_mean = mean_p.gbm, ate_condmean_ols(df)))
+  aipw_estimations_matched <- rbind(aipw_estimations_matched, c(n_treated = n_treated, n_control = n_control, p_mean = mean_p.gbm, aipw_ols(df, df$p.gbm)))
+}
+rownames(condmeans_estimations_matched) <- c("GCS Mild/Moderate (8-15)", "GCS Severe (3-7)", "GCS Mild/Moderate + Anomaly", "GCS Mild/Moderate + no Anomaly", "GCS Severe + Anomaly", "GCS Severe + no Anomaly")
+rownames(aipw_estimations_matched) <- c("GCS Mild/Moderate (8-15)", "GCS Severe (3-7)", "GCS Mild/Moderate + Anomaly", "GCS Mild/Moderate + no Anomaly", "GCS Severe + Anomaly", "GCS Severe + no Anomaly")
+```
+
+```{r}
+# Now let's print the results
+#print(cbind(condmeans_estimations, condmeans_estimations_matched))
+output_GCS <- cbind(aipw_estimations, aipw_estimations_matched)
+print(cbind(aipw_estimations, aipw_estimations_matched))
+
+write.csv(output_GCS, paste(dir_HTE, "data/GCS_output.csv", sep = ""))
+```
+
+Another way of clustering the dataset is using PAM clustering (try to cluster by the covariates) or Hierarchical Clustering
+
+1) PAM clustering
+```{r}
+# Before doing the PAM clustering we need to complete the dataset
+# So we first reduce the dataset
+
+fullreduced_dataset <- pretreated_dataset %>% select("X", all_variables_names) %>% as.data.frame()
+fullcompleted_dataset <- completeData(fullreduced_dataset, idvars, m_)
+```
+
+```{r}
+
+# Clustering via PAM - 4 Clusters choosed via Sillhouette
+
+n_clusters <- 4
+set.seed(1)
+pam_clustering <- function(dataset, n_clusters){
+  # Receives the full dataset from which we only use the covariates and the algorithm infers the distance using Gower Distance
+  # Change the type of the variables to categorical
+  dataset[, binary_variables_names] <- as.data.frame(sapply(dataset[, binary_variables_names], as.factor))
+
+  gower_dist <- daisy(dataset[, c(cts_variables_names, binary_variables_names)], metric = "gower") # We only use the covariates
+  gower_mat <- as.matrix(gower_dist)
+
+  # Do the clustering
+  pam_fit <- pam(gower_dist, diss = TRUE, k = n_clusters)
+  temp_df <- dataset %>% mutate(cluster = pam_fit$clustering)
+  temp_df [, binary_variables_names] <- temp_df[, binary_variables_names] %>% sapply(as.numeric) %>% as.data.frame(.)
+  return (temp_df)
+}
+pam_clustered <- pam_clustering(fullcompleted_dataset, 4)
+```
+
+Calculating the ATE for each cluster 
+```{r}
+# Now we estimate the ATE for each cluster using multiple methods
+condmeans_estimations_pam <- c()
+aipw_estimations_pam <- c()
+for (i in 1:n_clusters) {
+  df <- pam_clustered %>% filter(cluster == i) %>% select(-cluster)
+  print(aipw_ols(df, df$p.gbm))
+  condmeans_estimations_pam <- rbind(condmeans_estimations_pam, ate_condmean_ols(df))
+  aipw_estimations_pam <- rbind(aipw_estimations_pam, aipw_ols(df, df$p.gbm))
+}
+rownames(condmeans_estimations_pam) <- c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4")
+rownames(aipw_estimations_pam) <- c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4")
+```
+
+```{r}
+# Now let's print the results
+#print(cbind(condmeans_estimations, condmeans_estimations_matched))
+print(condmeans_estimations_pam)
+```
+
