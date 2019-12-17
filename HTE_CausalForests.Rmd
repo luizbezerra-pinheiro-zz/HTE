@@ -1,6 +1,9 @@
 ---
 title: "R Notebook"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
 ---
 
 This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
@@ -54,25 +57,32 @@ library(causalTree)
 library(causalToolbox)
 ```
 
-We now read the data set of interest for the pursuit of the study.
+We now read the data set of interest for the pursuit of the study. The present dataset has been treated already, there are no missing values nor NaN in the table.
 
 ```{r}
-df <- read.csv("tabela_amelia5.csv", na.strings = c("NA", "ND", "NF", "NR","")  )
+# df <- read.csv("tabela_amelia5.csv", na.strings = c("NA", "ND", "NF", "NR","")  )
+#outcome_variable_name <- "Y"
+#treatment_variable_name <- "W"
+#covariate_names <- c(  "Anticoagulant.therapy","Antiplatelet.therapy", "GCS.init",
+#"GCS.motor.init","Pupil.anomaly.ph","Osmotherapy.ph",   "Improv.anomaly.osmo","Cardiac.arrest.ph","SBP.ph","DBP.ph",      "HR.ph",  "SBP.ph.min",   "DBP.ph.min",   "HR.ph.max",    "Cristalloid.volume",   "Colloid.volume","HemoCue.init","Delta.hemoCue","Vasopressor.therapy",  "SpO2.ph.min",  "Medcare.time.ph",  "GCS",  "GCS.motor",    "Pupil.anomaly",    "TCD.PI.max",   "FiO2", "Neurosurgery.day0",    "IGS.II",   "Temperature.min",  "W",    "TBI",  "Osmotherapy",  "IICP", "EVD",  "Decompressive.craniectomy",    "Y",    "AIS.head", "AIS.face", "AIS.external", "ISS",  "Shock.index.ph",   "Delta.shock.index")
+
+df <- read.csv("data_correct.csv") #, na.strings = c("NA", "ND", "NF", "NR","")  )
 outcome_variable_name <- "Y"
 treatment_variable_name <- "W"
-covariate_names <- c("Trauma.center",   "Anticoagulant.therapy","Antiplatelet.therapy", "GCS.init",
-"GCS.motor.init","Pupil.anomaly.ph","Osmotherapy.ph",   "Improv.anomaly.osmo","Cardiac.arrest.ph","SBP.ph","DBP.ph",      "HR.ph",  "SBP.ph.min",   "DBP.ph.min",   "HR.ph.max",    "Cristalloid.volume",   "Colloid.volume","HemoCue.init","Delta.hemoCue","Vasopressor.therapy",  "SpO2.ph.min",  "Medcare.time.ph",  "GCS",  "GCS.motor",    "Pupil.anomaly",    "TCD.PI.max",   "FiO2", "Neurosurgery.day0",    "IGS.II",   "Temperature.min",  "W",    "TBI",  "Osmotherapy",  "IICP", "EVD",  "Decompressive.craniectomy",    "Y",    "AIS.head", "AIS.face", "AIS.external", "ISS",  "Shock.index.ph",   "Delta.shock.index")
+covariate_names <- c("SBP.ph","DBP.ph",
+                     "HR.ph","Shock.index.ph","Delta.shock.index",
+"Cristalloid.volume","Colloid.volume","HemoCue.init","Delta.hemoCue","SpO2.ph.min",
+"Vasopressor.therapy","AIS.external","Cardiac.arrest.ph")
+
+summary(df)
 ```
 
 
 ```{r}
 all_variables_names <- c(outcome_variable_name, treatment_variable_name, covariate_names)
+df <- df[, which(names(df) %in% all_variables_names)]
 
-df<- df[, which(names(df) %in% all_variables_names)]
-
-df <- na.omit(df)
-
-train_fraction <- 0.80  # Use train_fraction % of the dataset to train our models
+train_fraction <- 0.70  # Use train_fraction % of the dataset to train our models
 n <- dim(df)[1]
 
 train_idx <- sample.int(n, replace=F, size=floor(n*train_fraction))
@@ -81,11 +91,10 @@ df_test <- df[-train_idx,]
 
 ```
 
-Detecting heterogeneous treatment effects, i.e., differential effects of an intervention for certain subgroups of the population, can be very valuable in many areas of research. In medicine, for example, researchers might be interested in finding which subgroup of patients benefits most from getting a certain drug. At the same time, one might be worried about finding spurious effects just by estimating many different specifications, and this is why many scientific fields require pre-analysis plans for publications. However, researchers may find these plans restrictive since they cannot publish results for subgroups they did not anticipate before running the experiment.
+Detecting heterogeneous treatment effects, i.e., differential effects of an intervention for certain subgroups of the population, can be very valuable in many areas of research. 
+Causal trees provide a data-driven approach to partitioning the data into subgroups that differ by the magnitude of their treatment effects. Much like decision trees, which partition the covariate space by finding subgroups with similar *outcomes*, causal trees find subgroups with *similar treatment effects*. Moreover, even though this is an adaptive method, these subgroups do not need to be specified prior to the experiment.
 
-Athey and Imbens (2016)'s **causal trees** provide a data-driven approach to partitioning the data into subgroups that differ by the magnitude of their treatment effects. Much like decision trees, which partition the covariate space by finding subgroups with similar *outcomes*, causal trees find subgroups with *similar treatment effects*. Moreover, even though this is an adaptive method, these subgroups do not need to be specified prior to the experiment.
-
-In order to ensure valid estimates of the treatment effect within each subgroup, Athey and Imbens propose a sample-splitting approach that they refer to as **honesty**: a method is honest if it uses one subset of the data to estimate the model parameters, and a different subset to produce estimates given these estimated parameters. In the context of causal trees, honesty implies that the asymptotic properties of treatment effect estimates within leaves are the same as if the tree partition had been exogenously given, and it is one of the assumptions required to produce unbiased and asymptotically normal estimates of the treatment effect.
+In order to ensure valid estimates of the treatment effect within each subgroup, a sample-splitting approach is used -  **honesty**: a method is honest if it uses one subset of the data to estimate the model parameters, and a different subset to produce estimates given these estimated parameters. In the context of causal trees, honesty is one of the assumptions required to produce unbiased and asymptotically normal estimates of the treatment effect.
 
 #### Step 1: Split the dataset
 
@@ -95,7 +104,7 @@ As we just explained, honesty requires us to separate different subsets of our t
 + `df_est`: the *estimation sample*, used to compute the average treatment effect in each leaf
 
 ```{r}
-split_size <- floor(nrow(df_train) * 0.5)
+split_size <- floor(nrow(df_train) * 0.7)
 split_idx <- sample(nrow(df_train), replace=FALSE, size=split_size)
 
 # Make the splits
@@ -117,7 +126,7 @@ ct_unpruned <- honest.causalTree(
   split.Honest=TRUE,          # Use honesty when splitting
   cv.Honest=TRUE,             # Use honesty when performing cross-validation
 
-  minsize=25,                 # Min. number of treatment and control cases in each leaf
+  minsize=16,                 # Min. number of treatment and control cases in each leaf
   HonestSampleSize=nrow(df_est)) # Num obs used in estimation after building the tree
 ```
 
@@ -125,69 +134,75 @@ ct_unpruned <- honest.causalTree(
 ```{r}
 rpart.plot(ct_unpruned,type = 4, extra = 0, branch.lty = 3, box.palette = "RdYlGn")
 
+
+```
+
+```{r}
 rpart.plot(ct_unpruned, type = 4, varlen = 0, faclen = 0, fallen.leaves = TRUE)
 ```
 
-#### Cross-validate
-
-We must prune the tree by cross-validation to avoid overfitting. The honest cross-validation method selected above (and recommended) penalizes an estimate of the variance in the treatment effects estimates across leaves, and this estimate is computed using the estimation sample. The `cv.option` selected above ($TOT$) uses an unbiased estimate of the test mean-squared error.
 
 
 ```{r}
-# Table of cross-validated values by tuning parameter.
-ct_cptable <- as.data.frame(ct_unpruned$cptable)
+rpart.plot(
 
-# Obtain optimal complexity parameter to prune tree.
-selected_cp <- which.min(ct_cptable$xerror)
-optim_cp_ct <- ct_cptable[selected_cp, "CP"]
+  x=ct_unpruned,        # Unpruned tree
 
-# Prune the tree at optimal complexity parameter.
-ct_pruned <- prune(tree=ct_unpruned, cp=optim_cp_ct)
+  type=3,             # Draw separate split labels for the left and right directions
+
+  fallen=TRUE,        # Position the leaf nodes at the bottom of the graph
+
+  leaf.round=1,       # Rounding of the corners of the leaf node boxes
+
+  extra=100,          # Display the percentage of observations in the node
+
+  branch=.1,          # Shape of the branch lines
+
+  box.palette="RdBu") # Palette for coloring the node
+
+
 ```
 
 
-#### Predict point estimates (on estimation sample)
 
-To predict the treatment effect on the estimation sample, use the function `predict` as below.
-```{r}
-tauhat_ct_est <- predict(ct_pruned, newdata=df_est)
-```
+## Estimating the Treatment with Causal Forests
 
-Até aqui dá bom, mas a parte 5 em diante kiba.
-
+We start by training a pilot random forest on all the features, and then train a second forest on only those features that saw a reasonable number of splits in the first forest. This enables the second forest to make better splits and use most useful features.
 
 ```{r}
 Y <- df[, which(names(df) %in% outcome_variable_name)]
 W <- df[, which(names(df) %in% treatment_variable_name)]
+x_covariate_names <- c("SBP.ph","DBP.ph",
+                     "HR.ph","Shock.index.ph","Delta.shock.index",
+"Cristalloid.volume","Colloid.volume","HemoCue.init","Delta.hemoCue","SpO2.ph.min",
+"Vasopressor.therapy","AIS.external","Cardiac.arrest.ph")
 
-x_covariate_names <- c("Trauma.center", "GCS.init",
-                     "GCS.motor.init","HemoCue.init","Delta.hemoCue", "Delta.shock.index", "ISS")
-#x_covariate_names <- c("Trauma.center",   "Anticoagulant.therapy","Antiplatelet.therapy", "GCS.init",
-#"GCS.motor.init","Pupil.anomaly.ph","Osmotherapy.ph",   "Improv.anomaly.osmo","Cardiac.arrest.ph","SBP.ph","DBP.ph",      "HR.ph",  "SBP.ph.min",   "DBP.ph.min",   "HR.ph.max",    "Cristalloid.volume",   "Colloid.volume","HemoCue.init","Delta.hemoCue","Vasopressor.therapy",  "SpO2.ph.min",  "Medcare.time.ph",  "GCS",  "GCS.motor",    "Pupil.anomaly",    "TCD.PI.max",   "FiO2", "Neurosurgery.day0",    "IGS.II",   "Temperature.min",  "W",    "TBI",  "Osmotherapy",  "IICP", "EVD",  "Decompressive.craniectomy",    "Y",    "AIS.head", "AIS.face", "AIS.external", "ISS",  "Shock.index.ph",   "Delta.shock.index")
 X <- df[, which(names(df) %in% x_covariate_names)]
-
-
-
 X <- data.frame(lapply(X, function(x) as.numeric(as.character(x))))
-y_forest <- regression_forest(X, Y)
-y_hat <- predict(y_forest)$predictions # wtf is predictions???
 
-w_forest <- regression_forest(X, W)
+y_forest <- regression_forest(X, Y) #Forest for the expected outcome
+y_hat <- predict(y_forest)$predictions
+
+w_forest <- regression_forest(X, W) #forest for the propensity score
 w_hat <- predict(w_forest)$predictions
 
 cf_raw <- causal_forest(X, Y, W,
                         Y.hat = y_hat, W.hat = w_hat)
 
 varimp <- variable_importance(cf_raw)
-selected_id <- which(varimp > mean(varimp))
+
+selected_id <- which(varimp > mean(varimp)) #Here we select the variables that were best fitted in the Forest
+  
 cf <- causal_forest(X[,selected_id], Y, W,
                     Y.hat = y_hat, W.hat = w_hat,
                     tune.parameters = TRUE)
 tau_hat <- predict(cf)$predictions
 
-head(tau_hat)
+hist(tau_hat) #Histogram of out-of-bag CATE estimates from a causal forest trained above
 ```
 
+
+We call here the average treatment function (from the grf package).
 
 ```{r}
 ATE <- average_treatment_effect(cf)
@@ -196,22 +211,29 @@ paste( " 9 5 % CI for the ATE : " , round ( ATE [1] , 3 ) ,
 ```
 
 
-
-
-```{r}
-hist(tau_hat)
-```
-
+In order to test the heterogeneity learned we can compare if the out-of-bag CATE estimates (tau_hat) are above or below the median CATE estimates, and then we estimate the ATE in these two subgroups separately.
 
 ```{r}
-high_effect <- tau_hat > median(tau_hat)
-ate_high <- average_treatment_effect(cf, subset = high_effect)
+# Compare regions with high and low estimated CATEs
+
+high_effect <- tau_hat > median(tau_hat) #Selection of those above the median
+
+#Make the predictions for each subgroup
+ate_high <- average_treatment_effect(cf, subset = high_effect) 
 ate_low <- average_treatment_effect(cf, subset = !high_effect)
+
 paste( " 9 5 % CI for the ATE : " , round ( ate_high[1] - ate_low[1] , 3 ) ,
 " +/ - " , round ( qnorm (0.975) * sqrt(ate_high[2]^2 + ate_low[2]^2) , 3 ))
 
 ```
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+Another possible approach for testing heterogeneity is by making the best linear predictor comparison. In this case we search to fit the CATE as a linear function of the out-of-bag causal forest estimates. We make the regression wrt
+$C_{i} = \overline{\tau}(W_i - \hat{e}^{(-i)}(X_i))$ and $ D_i = (\hat{\tau}^{(-i)}(X_i) - \overline{\tau})(W_i - \hat{e}^{(-i)}(X_i))$.
 
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+We regress $Y_i - \hat{m}^{(-i)}(X_i)$ against $C_i$ and $D_i$. The coefficient of $D_i$ can be interpreted as a measure of the quality of the estimates of treatment heterogeneity. Formally: the p-value for the second coefficient  will be used to test the hypothesis that the causal forest succeeded in finding heterogeneity.
+```{r}
+test_calibration(cf)
+```
+
+The causal forest has slightly succeeded in accurately estimating treatment heterogeneity. 
+We see that the estimator upon this dataset reveals no strong causality effect with the Tranexemic Acid administration and the expected outcome.
