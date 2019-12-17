@@ -1,0 +1,298 @@
+
+---
+title: "<centering>Estimation of Heterogeneous Treatment Effects with BART: </centering>"
+subtitle: Bayesian Additive Regression Trees
+author: Guilherme Marra
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+#font-import:
+  #font-family: 'Yantramanav'
+output:
+  html_document:
+    number_sections: no
+    toc: yes
+    toc_float: true
+    toc_depth: 2
+    self_contained: yes
+  pdf_document:
+    toc: yes
+keywords: conditional average treatment effect; machine learning;
+theme: null
+  chunk_output_type: console
+---
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE, comment=NA)
+# Clear workspace
+rm(list = ls())
+# Set seed for reproducibility
+set.seed(1234)
+```
+
+
+
+## Loading packages
+
+Before beginning the tutorial, let's make sure all necessary packages are installed. Try running the cell below and, if any issues arise, follow the instructions within it.
+
+**CRAN packages:** If any of these packages are not installed, write `install.packages("<name of package>")`. For example, to install the package `fBasics`, use `install.packages("fBasics")`. The number in parenthesis in the comments the package version that was used when this was tutorial was compiled. If you find yourself having issues, please consider upgrading or downgrading to the same package version.
+
+```{r cran_packages, include=TRUE, message=FALSE, warning=FALSE}
+library(dplyr)       # Data manipulation (0.8.0.1)
+library(fBasics)     # Summary statistics (3042.89)
+library(corrplot)    # Correlations (0.84)
+library(psych)       # Correlation p-values (1.8.12)
+library(grf)         # Generalized random forests (0.10.2)
+library(rpart)       # Classification and regression trees, or CART (4.1-13)
+library(rpart.plot)  # Plotting trees (3.0.6)
+library(treeClust)   # Predicting leaf position for causal trees (1.1-7)
+library(car)         # linear hypothesis testing for causal tree (3.0-2)
+library(devtools)    # Install packages from github (2.0.1)
+library(readr)       # Reading csv files (1.3.1)
+library(tidyr)       # Database operations (0.8.3)
+library(tibble)      # Modern alternative to data frames (2.1.1)
+library(knitr)       # RMarkdown (1.21)
+library(kableExtra)  # Prettier RMarkdown (1.0.1)
+library(ggplot2)     # general plotting tool (3.1.0)
+library(haven)       # read stata files (2.0.0)
+library(aod)         # hypothesis testing (1.3.1)
+library(evtree)      # evolutionary learning of globally optimal trees(1.0-7)
+library(caret)
+library(BART)        # Bayesian Additive Regression Trees
+library(viridis)     # For plots
+library(ggplot2)
+library(hrbrthemes)
+```
+
+**Non-CRAN packages:** The packages below have not yet been uploaded to CRAN or any other major package repository, but we can grab them from their authors' github webpages. If you don't have these packages installed already, uncomment the relevant line below to install it.
+
+```{r noncran_packages, include=TRUE, message=FALSE, warning=FALSE}
+# For causal trees (Athey and Imbens, 2016)  version 0.0
+install_github('susanathey/causalTree') # Uncomment this to install the causalTree package
+library(causalTree)
+
+# Uncomment this to install the causalToolbox package
+install_github("soerenkuenzel/causalToolbox")
+# (You may need to also run install.packages("BART") to install the causalToolbox library)
+library(causalToolbox)  # X-learners (Kuenzel et al, 2017)  version 0.0.1.0
+
+```
+
+
+## Loading the data
+
+We now read the data set of interest for the pursuit of the study.
+
+```{r}
+setwd("/Users/gui_marra/Documents/X/3A/Projects/MAP_Project")
+getwd()
+
+#df <- read.csv("amelia_comp_dataset.csv", na.strings = c("NA", "ND", "NF", "NR","") )
+df <- read.csv("reduced_dataset.csv", na.strings = c("NA", "ND", "NF", "NR","") )
+outcome_variable_name <- "Y"
+treatment_variable_name <- "W"
+# "Trauma.center"
+continuous_covariate_names <- c("SBP.ph","DBP.ph", "HR.ph", "Shock.index.ph",   "Delta.shock.index", "Cristalloid.volume", "Colloid.volume", "HemoCue.init","Delta.hemoCue", "SpO2.ph.min","p.logistic")
+
+categorical_covariate_names <- c("Vasopressor.therapy", "AIS.external", "Cardiac.arrest.ph", "GCS.init", "Pupil.anomaly")
+
+```
+
+
+```{r}
+BART_variables_names <- c(outcome_variable_name, treatment_variable_name, continuous_covariate_names)
+df <- df[, which(names(df) %in% BART_variables_names)]
+df <- na.omit(df)
+
+```
+
+
+
+
+
+## HTE 2: BART - Bayesian Additive Regression Trees  
+
+
+#### Step 1: Split the dataset
+
+Detecting heterogeneous treatment effects, i.e., differential effects of an intervention for certain subgroups of the population, can be very valuable in many areas of research. In medicine, for example, researchers might be interested in finding which subgroup of patients benefits most from getting a certain drug. At the same time, one might be worried about finding spurious effects just by estimating many different specifications, and this is why many scientific fields require pre-analysis plans for publications. However, researchers may find these plans restrictive since they cannot publish results for subgroups they did not anticipate before running the experiment.
+
+
+#### Step 1: Split the dataset
+
+As we just explained, honesty requires us to separate different subsets of our training data for model selection and prediction.
+
++ `df_split`: the *splitting sample*, used to build the tree
++ `df_est`: the *estimation sample*, used to compute the average treatment effect in each leaf
+
+```{r}
+
+#Split Dataframe
+train_fraction <- 0.80  # Use train_fraction % of the dataset to train our models
+n <- dim(df)[1]
+
+train_idx <- sample.int(n, replace=F, size=floor(n*train_fraction))
+df_train <- df[train_idx,]
+df_test <- df[-train_idx,]
+
+
+# Creat new y vectors
+y_train <- df_train$Y
+y_test <- df_test$Y
+df_train$Y <- NULL
+df_test$Y <- NULL
+
+W_train <- df_train$W
+W_test <- df_test$W
+df_train$W <- NULL
+df_test$W <- NULL
+
+
+df_train <- scale(df_train)
+df_test <- scale(df_test)
+df_train <- cbind(df_train, 'W' = W_train)
+df_test <- cbind(df_test, 'W' = W_test)
+```
+
+
+# Histogram
+```{r}
+
+plot_hist <- function(a) {
+  
+  data <- data.frame(
+    Tao= a)
+
+  #Plot Hist Tao
+  ggplot(data, aes(x=Tao)) + 
+   geom_histogram(aes(y=..density..), colour="black", fill="white")+
+   geom_density(alpha=.2, fill="#FF6666") +
+   ggtitle("Tau distribution") +
+   xlab("Value of Tau") + 
+   ylab("Density") 
+  
+}
+
+
+```
+
+
+#Box Plots
+```{r}
+boxplot_graph <- function(dataPlot, Treatment) {
+  
+  # create a dataset
+  data <- data.frame(
+    W=Treatment,
+    PY1= dataPlot)
+  
+  data$W <- as.factor(data$W)
+  
+  
+  # Plot
+  data %>%
+    ggplot( aes(x=W, y=PY1, fill=W)) +
+      geom_boxplot() +
+      scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+      #geom_jitter(color="black", size=0.4, alpha=0.9) +
+      theme_ipsum() +
+      theme(
+        legend.position="none",
+        plot.title = element_text(size=11)
+      ) +
+      ggtitle("Visualizing BART Prediction") +
+      xlab("real outcome") + 
+      ylab("probability of outcome estimated") 
+}
+```
+
+
+#Violin Plots
+```{r}
+violinplot_graph <- function(dataPlot, Treatment) {
+  
+  # create a dataset
+  data <- data.frame(
+    W=Treatment,
+    PY1= dataPlot)
+  
+  data$W <- as.factor(data$W)
+  
+  
+  # Plot
+  data %>%
+    ggplot( aes(x=W, y=PY1, fill=W)) +
+      geom_violin() +
+      scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+      geom_jitter(color="black", size=0.4, alpha=0.9) +
+      theme_ipsum() +
+      theme(
+        legend.position="none",
+        plot.title = element_text(size=11)
+      ) +
+      ggtitle("Violinplot") +
+      xlab("")
+}
+
+```
+
+
+
+```{r}
+#FIT THE MODEL
+post <- pbart(df_train, y_train, df_test, ntree = 100L, ndpost=5000L, seed=99)
+post <- mc.pbart (df_train, y_train, df_test, ntree = 100L, ndpost=5000L, mc.cores=2, seed=99)
+
+
+
+
+#The first way to verify the model we expect to see in the test set a greater probability of death, measured by prob.test.mean of the model in the subset of people that  had the outcome
+realpred <- predict (post, df_test, mc.cores=2)
+boxplot_graph(realpred$prob.test.mean, y_test)
+
+
+#Calculating the mean of the estimated outcome probability
+dataf = data.frame('f'=realpred$prob.test.mean,'W' = y_test)
+mean(dataf[dataf$W==1,]$f)
+mean(dataf[dataf$W==0,]$f)
+count(df[df$Y==1,])
+
+
+
+#Following with this model we will calculate f(x_test, W=1) and f(x_test, W=0) and doing the difference to get Tao(x) for each sample in x_test
+df_test_W0 <- df_test
+df_test_W0$W <- 0
+
+df_test_W1 <- df_test
+df_test_W1$W <- 1
+
+
+predW0 <- predict(post, df_test_W0, mc.cores=2)
+predW1 <- predict(post, df_test_W1, mc.cores=2)
+TaoTest = predW1$prob.test.mean - predW0$prob.test.mean
+
+
+
+#Getting all elements with Tao<0, that means that our prediction for them were: less probability of outcome -> should take the treatment
+view(TaoTest[TaoTest<0])
+
+
+#Calculating the mean of Tau and it's distribution
+mean (TaoTest)
+plot_hist(TaoTest)
+
+
+
+
+
+
+#Visualizing the estimated outcome probability with respect to treatment identifier
+violinplot_graph(realpred$prob.test.mean, W_test)
+```
+
+
+
+
+
+
+
+
