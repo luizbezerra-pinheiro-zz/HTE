@@ -15,6 +15,8 @@ library("cluster")
 library("rlist") # Append
 library("dplyr")
 library("mice")
+library("FactoMineR")
+library("factoextra")
 ```
 
 
@@ -175,7 +177,6 @@ death_by_severity_pupil_stats <- function(dataset){
 death_by_severity_gcs_stats(pretreated_dataset)
 death_by_severity_pupil_stats(pretreated_dataset)
 
-#write.csv(rbind(stats_glasgow, stats_pupil, death_by_severity_gcs_stats(pretreated_dataset), death_by_severity_pupil_stats(pretreated_dataset)), paste(dir_HTE, "data/stats.csv", sep = ""))
 
 write.csv(stats_glasgow, paste(dir_HTE, "data/stats_glasgow.csv", sep = ""))
 write.csv(stats_pupil, paste(dir_HTE, "data/stats_pupil.csv", sep = ""))
@@ -192,12 +193,9 @@ completeData <- function(dataset, idvars, m_){
   predM = init$predictorMatrix
   predM[, idvars] <- 0
   tempData <- mice(dataset, predictorMatrix=predM, m=m_,maxit=10,meth= "pmm",seed=500)
-  #dfs <- list()
-  #for (i in c(1:m_))
-  #{
+
   df <- complete(tempData, 1) %>% as.data.frame(.)
-  #write.csv(dfs[[i]], file=paste("/home/luiz/Documents/Projects/HTE/data/MICE_pretreated_dataset_",i,".csv", sep = ""))
-  #}
+
   return (df)
 }
 
@@ -205,10 +203,8 @@ completeData <- function(dataset, idvars, m_){
 idvars <- c("X")
 m_ <- 1
 
-#for (df in reduced_dataframes){
 completed_dataframe <- completeData(pretreated_dataset, idvars = idvars, m_)
-#completed_dataframe <- list.append(completed_dataframes, c_df)
-#}
+
 completed_dataframe
 ```
 
@@ -228,11 +224,6 @@ all_variables_names <- c(covariates, severity_variables_names, "W", "Y")
 reduced_dataframe <- completed_dataframe %>% select("X", all_variables_names) %>% as.data.frame()
 
 reduced_dataframe
-#Standardize the continous variables that will be selected
-#reduced_dataframe[, cts_variables_names] <- reduced_dataframe[, cts_variables_names] %>%  scale()
-
-#reduced_dataframe
-
 
 ```
 
@@ -304,7 +295,6 @@ gbm_ps <- function(dataset, psFormula){
 psFormula = as.formula(paste("W ~", paste(covariates, collapse = " + ")))
 for (i in 1:length(dataframes_clustered)){
   dataframes_clustered[[i]]$p.logistic <- logistic_ps(dataframes_clustered[[i]], psFormula)
-  #dataframes_clustered[[i]]$p.logistic <- p_logistic(dataframes_clustered[[i]], psFormula)
 }
 
 # Covert all dataset to numeric
@@ -314,9 +304,6 @@ for (i in 1:length(dataframes_clustered)){
 
 
 dataframes_clustered
-#completed_dataframes[[1]]
-
-#write.csv(completed_dataframes[[1]], file = paste(dir_HTE, "data/moderate_GCS_dataset.csv", sep = ""))
 
 # Compute all propensity score GBM for the reduced_dataframe to be used also on HTE
 reduced_dataframe$p.logistic <- logistic_ps(reduced_dataframe, psFormula)
@@ -396,26 +383,23 @@ aipw_ols <- function(dataset, p) {
 
 ```{r}
 # Now we estimate the ATE for each cluster using multiple methods
-condmeans_estimations <- c()
 aipw_estimations <- c()
 for (df in dataframes_clustered) {
   n_treated = df %>% filter(W == 1) %>% nrow()
   n_control = df %>% filter(W == 0) %>% nrow()
   mean_p.logistic = mean(df[, "p.logistic"])
-  condmeans_estimations <- rbind(condmeans_estimations, c(n_treated = n_treated, n_control = n_control, p_mean = mean_p.logistic, ate_condmean_ols(df)))
   aipw_estimations <- rbind(aipw_estimations, c(n_treated = n_treated, n_control = n_control, p_mean = mean_p.logistic, aipw_ols(df, df$p.logistic)))
 }
-rownames(condmeans_estimations) <- c("GCS Mild/Moderate (8-15)", "GCS Severe (3-7)", "GCS Mild/Moderate + Anomaly", "GCS Mild/Moderate + no Anomaly", "GCS Severe + Anomaly", "GCS Severe + no Anomaly")
+
 rownames(aipw_estimations) <- c("GCS Mild/Moderate (8-15)", "GCS Severe (3-7)", "GCS Mild/Moderate + Anomaly", "GCS Mild/Moderate + no Anomaly", "GCS Severe + Anomaly", "GCS Severe + no Anomaly")
 
 aipw_estimations
-condmeans_estimations
 ```
 Matching to try to reduce cofounding
 ```{r}
 # Now let's do a matching in each dataset to try to reduce confounding
 # As we have just too little patients in the smaller clusters, we will only use 2 clusters using p.logistic as propensity score
-# So we do the Genetic matching, discarding Control patients, and then we re-cluster by severity
+# So we do the Greedy matching, discarding Control patients, and then we re-cluster by severity
 
 reduced_dataframe
 
@@ -425,7 +409,6 @@ matched_dataframe <- matchit(formula = psFormula, data = reduced_dataframe, meth
 matched_dataframe
 
 # Now we remove the new columns automatically added by matchit
-#matched_dataframe$p.logistic <- matched_dataframe$distance
 matched_dataframe$distance <- NULL
 matched_dataframe$weights<- NULL
 matched_dataframe$p.logistic <- logistic_ps(matched_dataframe, psFormula)
@@ -434,10 +417,6 @@ matched_dataframe$p.logistic <- logistic_ps(matched_dataframe, psFormula)
 matched_clustered_severity_dataframes <- cluster_by_severity(matched_dataframe)
 matched_clustered_severity_dataframes
 
-#Now we re-estimate the propensity score for each cluster
-#for (i in 1:length(matched_clustered_severity_dataframes)){
-#  matched_clustered_severity_dataframes[[i]]$p.logistic <- logistic_ps(matched_clustered_severity_dataframes[[i]], psFormula)
-#}
 
 hist(matched_clustered_severity_dataframes[[2]]$p.logistic)
 # Now we re-estimate the ATE for each cluster using AIPW method
@@ -459,7 +438,6 @@ aipw_estimations_matched
 
 ```{r}
 # Now let's print the results
-#print(cbind(condmeans_estimations, condmeans_estimations_matched))
 output_GCS <- cbind(aipw_estimations, aipw_estimations_matched)
 print(cbind(aipw_estimations, aipw_estimations_matched))
 
@@ -477,8 +455,6 @@ Another way of clustering the dataset is using PAM clustering (try to cluster by
 reduced_dataframe$Pupil.anomaly <- NULL
 reduced_dataframe$GCS.init <- NULL
 
-n_clusters <- 2
-set.seed(1)
 pam_clustering <- function(dataset, n_clusters){
   # Receives the full dataset from which we only use the covariates and the algorithm infers the distance using Gower Distance
   # Change the type of the variables to categorical
@@ -493,6 +469,22 @@ pam_clustering <- function(dataset, n_clusters){
   temp_df [, binary_variables_names] <- temp_df[, binary_variables_names] %>% sapply(as.numeric) %>% as.data.frame(.)
   return (temp_df)
 }
+
+# Let's take a look in the sillhouette to determine the n_cluster (ONLY ONE TIME BECAUSE TAKES TOO LONG)
+# sil_width <- c(NA)
+# for(i in 2:8){
+#   pam_fit <- pam(gower_dist, diss = TRUE, k = i)
+#   sil_width[i] <- pam_fit$silinfo$avg.width
+# }
+# plot(1:8, sil_width,
+#      xlab = "Number of clusters",
+#      ylab = "Silhouette Width")
+# lines(1:8, sil_width)
+
+# We chose n_cluster = 2
+
+n_clusters <- 2
+set.seed(1)
 pam_clustered <- pam_clustering(reduced_dataframe, n_clusters)
 pam_clustered
 ```
@@ -500,23 +492,19 @@ pam_clustered
 Calculating the ATE for each cluster 
 ```{r}
 # Now we estimate the ATE for each cluster using multiple methods
-condmeans_estimations_pam <- c()
 aipw_estimations_pam <- c()
 for (i in 1:n_clusters) {
   df <- pam_clustered %>% filter(cluster == i) %>% select(-cluster)
-  print(aipw_ols(df, df$p.logistic))
-  df
-  condmeans_estimations_pam <- rbind(condmeans_estimations_pam, ate_condmean_ols(df))
-  aipw_estimations_pam <- rbind(aipw_estimations_pam, aipw_ols(df, df$p.logistic))
+  n_treated = df %>% filter(W == 1) %>% nrow()
+  n_control = df %>% filter(W == 0) %>% nrow()
+  p_mean = mean(df$p.logistic)
+  aipw_estimations_pam <- rbind(aipw_estimations_pam, c(n_treated = n_treated, n_control = n_control, p.logistic = p_mean, aipw_ols(df, df$p.logistic)))
 }
-rownames(condmeans_estimations_pam) <- c("Cluster 1", "Cluster 2")
 rownames(aipw_estimations_pam) <- c("Cluster 1", "Cluster 2")
 ```
 
 ```{r}
 # Now let's print the results
-#print(cbind(condmeans_estimations, condmeans_estimations_matched))
-print(condmeans_estimations_pam)
 print(aipw_estimations_pam)
 ```
 
@@ -539,7 +527,7 @@ matched_aipw_genetic <- matchit(psFormula, data = reduced_dataframe, method = "n
 matched_aipw_genetic$distance <- NULL
 matched_aipw_genetic$weights <- NULL
 matched_aipw_genetic$p.logistic <- logistic_ps(matched_aipw_genetic, psFormula)
-hist(matched_aipw_genetic$p.logistic, main = paste("Histogram of Propensity Score"), xlab = "Propensity Score")
+hist(matched_aipw_genetic$p.logistic, main = paste("Histogram of Propensity Score after matching"), xlab = "Propensity Score")
 
 
 aipw_ATE_after <- aipw_ols(matched_aipw_genetic, matched_aipw_genetic$p.logistic)
@@ -553,26 +541,67 @@ ATE_aipw_genetic
 # Now let's cluster the Data  (PAM Clustering) after the matching and re-estimate the ATE for each cluster
 pam_matched_clustered <- pam_clustering(matched_aipw_genetic, n_clusters)
 aipw_estimations_matched_pam <- c()
-condmeans_estimations_matched_pam <- c()
 for (i in 1:n_clusters) {
   df <- pam_matched_clustered %>% filter(cluster == i) %>% select(-cluster)
-  condmeans_estimations_matched_pam <- rbind(condmeans_estimations_matched_pam, ate_condmean_ols(df))
-  aipw_estimations_matched_pam <- rbind(aipw_estimations_matched_pam, aipw_ols(df, df$p.logistic))
+  n_treated = df %>% filter(W == 1) %>% nrow()
+  n_control = df %>% filter(W == 0) %>% nrow()
+  p_mean = mean(df$p.logistic)
+  aipw_estimations_matched_pam <- rbind(aipw_estimations_matched_pam, c(n_treated = n_treated, n_control = n_control, p.logistic = p_mean, aipw_ols(df, df$p.logistic)))
 }
 rownames(aipw_estimations_matched_pam) <- c("Cluster 1", "Cluster 2")
 
 print(aipw_estimations_matched_pam)
-print(condmeans_estimations_matched_pam)
-# Greedy Matching
-#matched_aipw_greedy <- matchit(psFormula, data = fullcompleted_dataset, method = "nearest", discard = "control", distance = p_logistic(fullcompleted_dataset)) %>% match.data() %>% as.data.frame()
 
-#aipw_ATE_after <- aipw_ols(matched_aipw, p_logistic(matched_aipw_greedy))
-#n_treated_after = matched_aipw %>% filter(W == 1) %>% nrow()
-#n_control_after = matched_aipw %>% filter(W == 0) %>% nrow()
+```
 
-#ATE_aipw_greedy <- c(n_treated = n_treated_after, n_control = n_control_after, aipw_ATE_after)
 
-#print(rbind(info_aipw_before, info_aipw_after))
+REMOVE THIS BEFORE SENDING (CASO NINGUÈM COMSIGA DEIXAR BONITINHO)
 
+
+```{r}
+# TO see the cluster we will use MCA (Multiple correspondence analysis)
+str(pam_clustered)
+data.FAMD_analysis <- pam_clustered %>% select(-c("X", "Y", "W"))
+data.FAMD_analysis[, binary_variables_names] <- data.FAMD_analysis[, binary_variables_names] %>% lapply(as.factor)
+
+levels(data.FAMD_analysis$Vasopressor.therapy) <- c("VT-1", "VT-2")
+levels(data.FAMD_analysis$AIS.external) <- c("AIS-1", "AIS-2", "AIS-3", "AIS-4", "AIS-5")
+levels(data.FAMD_analysis$Cardiac.arrest.ph) <- c("CA-0", "CA-1")
+
+str(data.FAMD_analysis)
+
+res.famd <- FAMD(data.FAMD_analysis, graph = FALSE)
+print(res.famd)
+eig.val <- get_eigenvalue(res.famd)
+head(eig.val)
+fviz_screeplot(res.famd, addlabels = TRUE, ylim = c(0, 45))
+
+
+var <- get_famd_var(res.famd)
+head(var$coord)
+head(var$contrib)
+
+# Plot of variables
+fviz_famd_var(res.famd, repel = TRUE)
+# Contribution to the first dimension
+fviz_contrib(res.famd, "var", axes = 1)
+# Contribution to the second dimension
+fviz_contrib(res.famd, "var", axes = 2)
+
+quanti.var <- get_famd_var(res.famd, "quanti.var")
+head(quanti.var$coord)
+fviz_famd_var(res.famd, "quanti.var", repel = TRUE, col.var = "cos2", gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"))
+
+
+fviz_famd_var(res.famd, "quali.var", col.var = "contrib", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07")
+             )
+
+quali.var <- get_famd_var(res.famd, "quali.var")
+head(quali.var$contrib)
+fviz_famd_var(res.famd, "quali.var", col.var = "cos2", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07")
+             )
+fviz_famd_ind(res.famd, habillage = "cluster", palette = c("#00AFBB", "#E7B800"), repel = TRUE)
 ```
 
