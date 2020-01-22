@@ -1,18 +1,10 @@
 # HTE
 Heterogeneous Treatment Effect
 
+The objective of this project is to estimate the Heterogeneous Treatment Effect of a drug (Tranaxemic Acid) on a sample, the data used is confidential so it cannot be shared.
 
-### Useful Links:
+We used 2 strategies to arrive to this estimation:
+1) Estimate the Average Treatment Effect over a clustered Data
+2) Estimate the Heterogenous Treatment Effect directly using Random Forests
 
-#### Dropbox - https://www.dropbox.com/sh/tm93vs56gt5ffj4/AAB9QedxZZqAWmgCB_fkFagWa?dl=0
 
-#### Drive - https://drive.google.com/drive/folders/1NaXoBegVDjQAe__EChVguT0VXuPpmX8Z?usp=sharing
-#### Trello - https://trello.com/b/2G0Mhg0T/hte-map573
-
-Crash - https://crash3.lshtm.ac.uk 
-
-Coursera - https://www.coursera.org/learn/crash-course-in-causality
-
-MatchIt:
-  Package Reference - https://imai.fas.harvard.edu/research/files/matchit.pdf
-  Matching Method - https://en.wikipedia.org/wiki/Matching_(statistics)
